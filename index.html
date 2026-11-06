@@ -1,0 +1,248 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>Aperture Platformer — Тест 01</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0d1117; color:#e6edf3; font-family:system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    display:flex; flex-direction:column; align-items:center; min-height:100vh; padding:12px; }
+  h1 { font-size:20px; margin:8px 0 2px; letter-spacing:.5px; }
+  h1 span { color:#ffa657; }
+  p.sub { color:#8b949e; font-size:13px; margin-bottom:10px; text-align:center; }
+  #wrap { position:relative; width:min(960px,100%); }
+  canvas { width:100%; display:block; background:#161b22; border:1px solid #30363d; border-radius:10px; touch-action:none; }
+  #hud { display:flex; gap:12px; justify-content:center; margin:10px 0; font-size:15px; flex-wrap:wrap; }
+  #hud b { color:#7ee787; }
+  #msg { min-height:24px; text-align:center; font-size:15px; color:#ffa657; margin-bottom:6px; }
+  #controls { display:flex; gap:8px; justify-content:center; margin-top:8px; flex-wrap:wrap; }
+  button.btn { background:#21262d; color:#e6edf3; border:1px solid #30363d; border-radius:8px;
+    padding:12px 18px; font-size:16px; cursor:pointer; user-select:none; -webkit-user-select:none; }
+  button.btn:active { background:#30363d; }
+  #touch { display:none; gap:8px; justify-content:center; margin-top:8px; }
+  #touch button { flex:1; max-width:120px; padding:14px 0; font-size:20px; }
+  @media (pointer:coarse) { #touch { display:flex; width:100%; } }
+  a.foot { color:#8b949e; font-size:12px; margin-top:10px; text-decoration:none; }
+</style>
+</head>
+<body>
+<h1>APERTURE <span>PLATFORMER</span> — Тест 01</h1>
+<p class="sub">Собери все энергоячейки и дойди до портала. Управление: ← → / A D — движение, Пробел / ↑ — прыжок.</p>
+<div id="hud"><div>Счёт: <b id="score">0</b></div><div>Ячейки: <b id="coins">0/0</b></div><div>Время: <b id="time">0.0</b>с</div></div>
+<div id="msg"></div>
+<div id="wrap"><canvas id="game" width="960" height="540"></canvas></div>
+<div id="controls"><button class="btn" id="restart">↻ Заново</button></div>
+<div id="touch">
+  <button class="btn" id="tLeft">◀</button>
+  <button class="btn" id="tJump">▲</button>
+  <button class="btn" id="tRight">▶</button>
+</div>
+<a class="foot" href="https://github.com/johannschmidt829/aperture-minigames">Исходник: github.com/johannschmidt829/aperture-minigames</a>
+<script>
+"use strict";
+const cv = document.getElementById('game'), ctx = cv.getContext('2d');
+const W = 960, H = 540;
+const GRAV = 0.6, MOVE = 4.2, JUMP = -13.5;
+
+// Уровень: платформы x,y,w,h ; монеты ; портал ; старт
+const LEVEL = {
+  platforms: [
+    {x:0,y:500,w:960,h:40},
+    {x:80,y:420,w:140,h:18},
+    {x:280,y:350,w:140,h:18},
+    {x:480,y:420,w:140,h:18},
+    {x:660,y:330,w:140,h:18},
+    {x:420,y:240,w:140,h:18},
+    {x:200,y:180,w:130,h:18},
+    {x:620,y:160,w:150,h:18},
+    {x:820,y:240,w:100,h:18},
+    {x:0,y:300,w:70,h:18},
+  ],
+  coins: [
+    {x:110,y:390},{x:150,y:390},{x:310,y:320},{x:350,y:320},
+    {x:510,y:390},{x:550,y:390},{x:690,y:300},{x:730,y:300},
+    {x:450,y:210},{x:490,y:210},{x:230,y:150},{x:650,y:130},{x:690,y:130},
+    {x:850,y:210},{x:30,y:270}
+  ],
+  portal: {x:880,y:440,w:50,h:60},
+  start: {x:30,y:440}
+};
+
+let player, coins, score, startTime, elapsed, won, msgEl;
+msgEl = document.getElementById('msg');
+const scoreEl = document.getElementById('score'), coinsEl = document.getElementById('coins'), timeEl = document.getElementById('time');
+
+function reset() {
+  player = {x:LEVEL.start.x, y:LEVEL.start.y, w:28, h:36, vx:0, vy:0, onGround:false, face:1};
+  coins = LEVEL.coins.map(c => ({...c, r:9, taken:false, bob:Math.random()*6.28}));
+  score = 0; startTime = performance.now(); elapsed = 0; won = false;
+  msgEl.textContent = '';
+  updateHud();
+}
+function updateHud() {
+  const got = coins.filter(c=>c.taken).length;
+  scoreEl.textContent = score;
+  coinsEl.textContent = got + '/' + coins.length;
+  timeEl.textContent = elapsed.toFixed(1);
+}
+
+const keys = {};
+addEventListener('keydown', e => {
+  if (['ArrowLeft','ArrowRight','ArrowUp','Space'].includes(e.code)) e.preventDefault();
+  keys[e.code] = true;
+  if (e.code==='KeyR') reset();
+});
+addEventListener('keyup', e => keys[e.code] = false);
+
+// Тач-кнопки
+function bindHold(id, on, off) {
+  const el = document.getElementById(id);
+  const s = e => { e.preventDefault(); on(); };
+  const x = e => { e.preventDefault(); off(); };
+  el.addEventListener('pointerdown', s);
+  el.addEventListener('pointerup', x);
+  el.addEventListener('pointercancel', x);
+  el.addEventListener('pointerleave', x);
+}
+let touchLeft=false, touchRight=false, touchJump=false;
+bindHold('tLeft', ()=>touchLeft=true, ()=>touchLeft=false);
+bindHold('tRight', ()=>touchRight=true, ()=>touchRight=false);
+bindHold('tJump', ()=>touchJump=true, ()=>touchJump=false);
+document.getElementById('restart').onclick = reset;
+// Клик/тап по канвасу = прыжок
+cv.addEventListener('pointerdown', ()=>{ touchJump = true; setTimeout(()=>touchJump=false, 150); });
+
+function rectsOverlap(a,b){ return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
+
+function step() {
+  if (!won) elapsed = (performance.now()-startTime)/1000;
+  const left = keys.ArrowLeft||keys.KeyA||touchLeft;
+  const right = keys.ArrowRight||keys.KeyD||touchRight;
+  const jump = keys.ArrowUp||keys.Space||keys.KeyW||touchJump;
+
+  player.vx = 0;
+  if (left) { player.vx = -MOVE; player.face = -1; }
+  if (right) { player.vx = MOVE; player.face = 1; }
+  player.vy += GRAV;
+  if (player.vy > 16) player.vy = 16;
+
+  // Горизонталь
+  player.x += player.vx;
+  if (player.x < 0) player.x = 0;
+  if (player.x + player.w > W) player.x = W - player.w;
+  for (const p of LEVEL.platforms) {
+    if (rectsOverlap(player,p)) {
+      if (player.vx > 0) player.x = p.x - player.w;
+      else if (player.vx < 0) player.x = p.x + p.w;
+    }
+  }
+  // Вертикаль
+  player.y += player.vy;
+  player.onGround = false;
+  for (const p of LEVEL.platforms) {
+    if (rectsOverlap(player,p)) {
+      if (player.vy > 0) { player.y = p.y - player.h; player.vy = 0; player.onGround = true; }
+      else if (player.vy < 0) { player.y = p.y + p.h; player.vy = 0; }
+    }
+  }
+  if (jump && player.onGround) { player.vy = JUMP; player.onGround = false; }
+  // Падение в бездну
+  if (player.y > H + 60) { player.x = LEVEL.start.x; player.y = LEVEL.start.y; player.vx=0; player.vy=0; score=Math.max(0,score-25); }
+
+  // Монеты
+  const t = performance.now()/500;
+  for (const c of coins) {
+    if (c.taken) continue;
+    c.bob += 0.05;
+    const cx = c.x, cy = c.y + Math.sin(c.bob)*3;
+    if (player.x < cx+9 && player.x+player.w > cx-9 && player.y < cy+9 && player.y+player.h > cy-9) {
+      c.taken = true; score += 100; updateHud();
+    }
+  }
+  // Портал
+  const got = coins.filter(c=>c.taken).length;
+  if (rectsOverlap(player, LEVEL.portal)) {
+    if (got === coins.length) {
+      if (!won) {
+        won = true;
+        const bonus = Math.max(0, Math.round(3000 - elapsed*20));
+        score += bonus;
+        msgEl.textContent = 'Тест пройден за ' + elapsed.toFixed(1) + 'с. Бонус скорости: +' + bonus + '. Нажми «Заново» (R).';
+        updateHud();
+      }
+    } else if (!won && msgEl.textContent === '') {
+      msgEl.textContent = 'Портал закрыт: собери все ячейки (' + got + '/' + coins.length + ').';
+      setTimeout(()=>{ if(!won) msgEl.textContent=''; }, 1800);
+    }
+  }
+  updateHudLive();
+}
+function updateHudLive(){
+  const got = coins.filter(c=>c.taken).length;
+  scoreEl.textContent = score;
+  coinsEl.textContent = got + '/' + coins.length;
+  if (!won) timeEl.textContent = elapsed.toFixed(1);
+}
+
+function draw() {
+  ctx.clearRect(0,0,W,H);
+  // Фон: сетка
+  ctx.strokeStyle = '#21262d'; ctx.lineWidth = 1;
+  for (let x=0;x<=W;x+=48){ ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
+  for (let y=0;y<=H;y+=48){ ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
+  // Платформы
+  for (const p of LEVEL.platforms) {
+    ctx.fillStyle = '#30363d';
+    ctx.fillRect(p.x,p.y,p.w,p.h);
+    ctx.fillStyle = '#58a6ff';
+    ctx.fillRect(p.x,p.y,p.w,4);
+  }
+  // Монеты
+  const t = performance.now()/500;
+  for (const c of coins) {
+    if (c.taken) continue;
+    const cy = c.y + Math.sin(c.bob)*3;
+    ctx.beginPath(); ctx.arc(c.x, cy, c.r, 0, 6.283);
+    ctx.fillStyle = '#e3b341'; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = '#9e6a03'; ctx.stroke();
+    ctx.fillStyle = '#0d1117'; ctx.font = 'bold 10px system-ui';
+    ctx.textAlign='center'; ctx.textBaseline='middle'; ctx.fillText('E', c.x, cy+1);
+  }
+  // Портал
+  const pt = LEVEL.portal;
+  const open = coins.every(c=>c.taken);
+  ctx.fillStyle = open ? '#3fb950' : '#6e7681';
+  ctx.fillRect(pt.x, pt.y, pt.w, pt.h);
+  ctx.fillStyle = '#0d1117';
+  ctx.fillRect(pt.x+6, pt.y+6, pt.w-12, pt.h-12);
+  ctx.fillStyle = open ? '#7ee787' : '#8b949e';
+  ctx.font = 'bold 11px system-ui'; ctx.textAlign='center';
+  ctx.fillText(open ? 'OPEN' : 'LOCK', pt.x+pt.w/2, pt.y+pt.h/2);
+  // Игрок: тестовый модуль
+  ctx.fillStyle = '#ffa657';
+  ctx.fillRect(player.x, player.y, player.w, player.h);
+  ctx.fillStyle = '#0d1117';
+  const ex = player.face === 1 ? player.x + 18 : player.x + 6;
+  ctx.fillRect(ex, player.y+10, 5, 6);
+  ctx.fillRect(player.face===1?player.x+18:player.x+6, player.y+10, 5, 6);
+  // Ноги
+  ctx.fillStyle = '#79c0ff';
+  const legOff = Math.sin(performance.now()/90)*(player.vx!==0?3:0);
+  ctx.fillRect(player.x+4, player.y+player.h-5, 8, 5+legOff*0.3);
+  ctx.fillRect(player.x+player.w-12, player.y+player.h-5, 8, 5-legOff*0.3);
+
+  if (won) {
+    ctx.fillStyle = 'rgba(13,17,23,.72)'; ctx.fillRect(0,0,W,H);
+    ctx.fillStyle = '#7ee787'; ctx.font = 'bold 42px system-ui'; ctx.textAlign='center';
+    ctx.fillText('ТЕСТ ПРОЙДЕН', W/2, H/2 - 10);
+    ctx.fillStyle = '#e6edf3'; ctx.font = '18px system-ui';
+    ctx.fillText('Счёт: ' + score + ' • Время: ' + elapsed.toFixed(1) + 'с', W/2, H/2 + 24);
+  }
+}
+
+function loop(){ step(); draw(); requestAnimationFrame(loop); }
+reset(); loop();
+</script>
+</body>
+</html>
