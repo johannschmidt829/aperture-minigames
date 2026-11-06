@@ -1,0 +1,3400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Conquest — a Risk-like board game</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 100%; height: 100%; overflow: hidden; }
+  body {
+    font-family: Georgia, "Times New Roman", serif;
+    background: #3b2a1a radial-gradient(circle at 30% 30%, #5a3f26, #2a1c10);
+    color: #f3e6c8;
+  }
+  /* Share the available width: the map keeps roughly three quarters of the screen. */
+  :root { --player-color: #b3202a; --side-width: clamp(150px, 14vw, 220px); }
+  #board-frame {
+    position: absolute; top: 1.5vh; right: 1.5vw;
+    width: calc(96vw - var(--side-width)); height: 86vh;
+    padding: 12px; border-radius: 10px;
+    background: linear-gradient(135deg, #8b5a2b, #5c3a1a);
+    box-shadow: 0 10px 30px rgba(0,0,0,.6), inset 0 0 0 3px #c9a063;
+    outline: 5px solid var(--player-color); outline-offset: 2px;   /* whose turn: frame in player colour */
+    transition: outline-color .4s;
+  }
+  #turn-toast {
+    position: absolute; left: 50%; top: 45%; transform: translate(-50%, -50%);
+    padding: .5em 1.4em; border-radius: 8px; pointer-events: none; opacity: 0;
+    font-size: clamp(18px, 4vh, 44px); font-variant: small-caps; font-weight: bold; white-space: nowrap;
+    background: rgba(243, 230, 200, .95); color: #3b2a1a;
+    box-shadow: inset 0 0 0 4px var(--player-color), 0 8px 24px rgba(0,0,0,.5);
+  }
+  #turn-toast.show { animation: toast 1.6s ease-out; }
+  #turn-toast.hint { font-size: clamp(13px, 2.2vh, 22px); font-variant: normal; font-weight: normal; white-space: normal;
+                     max-width: 80%; text-align: center; box-shadow: inset 0 0 0 3px #7a1f10, 0 8px 24px rgba(0,0,0,.5); }
+  #turn-toast.hint.show { animation: toast 2.6s ease-out; }
+  #handoff-dialog { text-align: center; }
+  #handoff-dialog .ended { font-size: .85em; text-transform: uppercase; letter-spacing: .2em; opacity: .65; }
+  #handoff-dialog .summary { font-style: italic; margin: 10px 0 20px; white-space: pre-line; max-width: 520px; }
+  #handoff-dialog .next {
+    display: flex; align-items: center; justify-content: center; gap: .5em;
+    font-size: 1.6em; font-variant: small-caps; font-weight: bold; margin-bottom: 6px;
+  }
+  #handoff-dialog .next .chip { width: 1em; height: 1em; }
+  #handoff-dialog .buttons { justify-content: center; }
+  #handoff-dialog button.primary { font-size: 1.15em; padding: 8px 28px; }
+  @keyframes toast { 0% { opacity: 0; } 12% { opacity: 1; } 70% { opacity: 1; } 100% { opacity: 0; } }
+  #board { display: block; width: 100%; height: 100%; border-radius: 4px; cursor: pointer; }
+  #side {
+    position: absolute; top: 1.5vh; left: 1vw;
+    width: var(--side-width); height: 86vh;
+    display: flex; flex-direction: column; gap: 10px; overflow: hidden;
+    font-size: clamp(12px, 1vw, 14px);
+  }
+  #side-header { display: flex; align-items: center; justify-content: space-between; gap: 6px; flex: none; }
+  #title { font-size: 1.1em; letter-spacing: .12em; color: #c9a063; font-variant: small-caps; }
+  #side h2 { font-size: 1em; font-variant: small-caps; letter-spacing: .12em; color: #c9a063; margin-bottom: 6px; }
+  #players-panel, #event-panel { display: flex; flex-direction: column; min-height: 0; }
+  #players-panel { flex: 1; }
+  #players-list, #event-log { list-style: none; overflow-y: auto; min-height: 0; scrollbar-color: #8b5a2b #3b2a1a; }
+  #players-list { display: flex; flex-direction: column; gap: 6px; }
+  .player-card {
+    flex: none; padding: 7px; border: 1px solid #8b5a2b; border-left: 3px solid var(--card-color); border-radius: 5px;
+    background: rgba(243, 230, 200, .08); line-height: 1.4;
+  }
+  .player-card.current { background: #f3e6c8; color: #3b2a1a; box-shadow: inset 0 0 0 1px #c9a063; }
+  .player-card.eliminated { opacity: .4; }
+  .player-card.eliminated .player-name { text-decoration: line-through; }
+  .player-heading { display: flex; align-items: center; gap: 4px; }
+  .player-heading canvas { width: 28px; height: 28px; flex: none; border-radius: 50%; background: #f3e6c8; }
+  .player-heading .chip { margin: 0; }
+  .player-name { font-weight: bold; font-variant: small-caps; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .player-stats { display: flex; flex-wrap: wrap; gap: 0 .5em; margin-top: 3px; font-size: .9em; }
+  .player-reinforcements { display: block; font-size: .85em; font-style: italic; opacity: .8; }
+  #event-panel { flex: 0 1 34%; border-top: 1px solid #8b5a2b; padding-top: 8px; }
+  #event-log { font-size: .9em; font-style: italic; line-height: 1.4; overflow-wrap: anywhere; }
+  #event-log li + li { margin-top: 7px; padding-top: 6px; border-top: 1px solid rgba(201, 160, 99, .2); }
+  #event-log .log-empty { opacity: .55; }
+  @media (max-width: 800px) {
+    :root { --side-width: clamp(112px, 22vw, 150px); }
+    #side { gap: 6px; }
+    #title { font-size: .9em; letter-spacing: .04em; }
+    .player-card { padding: 5px; }
+    .player-heading canvas { width: 22px; height: 22px; }
+  }
+  @media (max-height: 560px) { #event-panel { display: none; } }
+  #settings-button {
+    flex: none; width: 34px; aspect-ratio: 1; border-radius: 50%; cursor: pointer;
+    font-size: 24px; line-height: 1; color: #3b2a1a;
+    background: radial-gradient(circle at 35% 30%, #f8ecd0, #c9a063);
+    border: 2px solid #8b5a2b; box-shadow: 0 3px 8px rgba(0,0,0,.5);
+    transition: transform .2s;
+  }
+  #settings-button:hover { transform: rotate(45deg); }
+  dialog {
+    margin: auto; min-width: min(420px, 90vw); padding: 24px 28px; border: none; border-radius: 10px;
+    background: #f3e6c8; color: #3b2a1a; font-family: inherit;
+    box-shadow: inset 0 0 0 3px #c9a063, 0 10px 40px rgba(0,0,0,.7);
+  }
+  dialog::backdrop { background: rgba(20, 12, 4, .6); }
+  dialog h2 { font-variant: small-caps; margin-bottom: 14px; }
+  dialog p { margin-bottom: 18px; line-height: 1.4; }
+  dialog fieldset { border: 1px solid #c9a063; border-radius: 6px; padding: 10px 14px 14px; }
+  dialog legend { padding: 0 6px; font-size: .8em; text-transform: uppercase; letter-spacing: .15em; opacity: .7; }
+  .options { display: flex; gap: 10px; }
+  .option {
+    flex: 1; display: flex; flex-direction: column; align-items: center; padding: 10px 6px;
+    border: 2px solid #c9a063; border-radius: 6px; cursor: pointer; background: #fbf4e2;
+  }
+  .option:has(input:checked) { border-color: #7a1f10; background: #f0d9a8; box-shadow: 0 0 0 2px #ffcc22; }
+  .option input { position: absolute; opacity: 0; pointer-events: none; }
+  .option-title { font-weight: bold; font-variant: small-caps; font-size: 1.1em; }
+  .option-sub { font-size: .8em; opacity: .7; }
+  dialog fieldset + fieldset { margin-top: 12px; }
+  .player-row { display: grid; grid-template-columns: auto 1fr; gap: 6px 10px; align-items: center; }
+  .player-row + .player-row { margin-top: 12px; padding-top: 12px; border-top: 1px dashed #c9a063; }
+  .player-row input[type=text] {
+    font-family: inherit; font-size: 1em; padding: 4px 8px; border-radius: 4px;
+    border: 1px solid #8b5a2b; background: #fbf4e2; color: #3b2a1a;
+  }
+  .uniform-icon { width: 34px; height: 34px; justify-self: center; background: #fbf4e2; border-radius: 50%; border: 1px solid #c9a063; }
+  .uniform-label { font-size: .8em; font-style: italic; opacity: .75; }
+  .uniform-note { margin: 0 0 10px; font-size: .85em; font-style: italic; opacity: .8; }
+  .player-row[hidden] { display: none; }
+  #settings-dialog { max-height: 94vh; overflow-y: auto; }
+  .swatches { grid-column: 2; display: flex; gap: 6px; flex-wrap: wrap; }
+  .swatch { position: relative; cursor: pointer; }
+  .swatch input { position: absolute; opacity: 0; pointer-events: none; }
+  .swatch .chip { width: 26px; height: 26px; transition: transform .1s; }
+  .swatch:hover .chip { transform: scale(1.12); }
+  .swatch input:checked + .chip { box-shadow: 0 0 0 3px #f3e6c8, 0 0 0 5px #3b2a1a; }
+  .swatch input:disabled + .chip { opacity: .25; cursor: not-allowed; transform: none; }
+  .swatch input:disabled + .chip::after {        /* cross over a colour taken by another player */
+    content: ''; position: absolute; inset: 45% -3px auto; height: 2px; background: #3b2a1a; transform: rotate(-45deg);
+  }
+  .swatch input:focus-visible + .chip { outline: 2px dashed #7a1f10; outline-offset: 3px; }
+  .swatch .chip.flag-chip { width: 30px; height: 20px; border-radius: 3px; border: 1px solid #3b2a1a; }
+  .swatch .chip.random-chip { display: inline-grid; place-items: center; background: #fbf4e2; font-size: 15px; line-height: 1; }
+  dialog .buttons { display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px; }
+  #new-game-button { margin-right: auto; }
+  dialog button {
+    font-family: inherit; font-size: 1em; padding: 6px 16px; border-radius: 5px; cursor: pointer;
+    border: 2px solid #8b5a2b; background: #fbf4e2; color: #3b2a1a;
+  }
+  dialog button.primary { background: #7a1f10; border-color: #5a1508; color: #f3e6c8; }
+  #info {
+    position: absolute; left: 1vw; right: 1.5vw; bottom: 1.5vh;
+    height: calc(100vh - 86vh - 4.5vh);
+    display: flex; align-items: center; justify-content: center; gap: 3vw;
+    background: #f3e6c8; color: #3b2a1a; border-radius: 8px;
+    box-shadow: inset 0 0 0 3px #c9a063, 0 4px 12px rgba(0,0,0,.5);
+    font-size: clamp(14px, 2.6vh, 28px);
+  }
+  #info .label { font-size: max(11px, .65em); text-transform: uppercase; letter-spacing: .15em; color: #59452f; margin-right: .5em; }
+  #info .name { font-weight: bold; font-variant: small-caps; }
+  #info .neighbours { font-size: .7em; max-width: 50%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #turn { display: flex; align-items: center; gap: .5em; margin-right: auto; padding-left: 1vw; }
+  #turn .sub { display: block; font-size: clamp(12px, .6em, 16px); text-transform: uppercase; letter-spacing: .15em; color: #59452f; }
+  .chip {
+    display: inline-block; width: 1.3em; height: 1.3em; border-radius: 50%; flex: none;
+    border: 2px solid #3b2a1a; box-shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+  .chip.mini { width: .8em; height: .8em; border-width: 1px; margin-right: .35em; vertical-align: middle; }
+  .chip.mini:not([style*="background"]) { display: none; }
+  #end-turn {
+    margin-left: auto; margin-right: 1vw; font-family: inherit; font-size: .8em; font-variant: small-caps;
+    padding: .35em 1em; border-radius: 6px; cursor: pointer; color: #f3e6c8;
+    background: #3b2a1a; border: 2px solid #3b2a1a; box-shadow: 0 2px 5px rgba(0,0,0,.4);
+  }
+  #end-turn:hover:not(:disabled) { background: #59452f; outline: 2px solid #3b2a1a; outline-offset: 2px; }
+  #end-turn:focus-visible:not(:disabled) { outline: 3px solid #3b2a1a; outline-offset: 2px; }
+  #end-turn:disabled { background: #ded4bf; color: #594f40; border-color: #a89c83; border-style: dashed; box-shadow: none; cursor: not-allowed; }
+  .range-row { display: flex; align-items: center; gap: 12px; }
+  .range-row input { flex: 1; accent-color: #7a1f10; }
+  .range-row output { min-width: 2.2em; text-align: center; font-weight: bold; font-size: 1.3em; }
+
+  /* Battle */
+  #battle-dialog { min-width: min(560px, 94vw); }
+  #battle-dialog h2 { text-align: center; }
+  .battle { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: 14px; }
+  .side { text-align: center; }
+  .battle-icon { width: 72px; height: 72px; border-radius: 50%; background: #fbf4e2; border: 3px solid #8b5a2b; }
+  .side.att .battle-icon { border-color: #a51c14; }
+  .side.def .battle-icon { border-color: #1c3fa5; }
+  .side .who { font-weight: bold; font-variant: small-caps; font-size: 1.1em; }
+  .side .who::before { content: ''; display: inline-block; width: .7em; height: .7em; border-radius: 50%;
+                       background: var(--c); border: 1px solid #3b2a1a; margin-right: .35em; }
+  .side .where { font-size: .85em; opacity: .75; }
+  .side .troops { font-weight: bold; margin-top: 4px; }
+  .dice-rows { display: flex; flex-direction: column; gap: 8px; min-height: 160px; justify-content: center; }
+  .dice-row { display: grid; grid-template-columns: 48px 28px 48px; align-items: center; justify-items: center; }
+  .vs { font-size: 1.1em; font-weight: bold; color: #7a1f10; }
+  .die {
+    width: 46px; height: 46px; border-radius: 9px; padding: 6px; display: grid;
+    grid-template: repeat(3, 1fr) / repeat(3, 1fr);
+    box-shadow: inset 0 -3px 0 rgba(0,0,0,.25), inset 0 2px 0 rgba(255,255,255,.25), 0 3px 6px rgba(0,0,0,.45);
+    transition: opacity .35s, transform .35s, filter .35s, box-shadow .35s;
+  }
+  .die.red  { background: linear-gradient(145deg, #e8483c, #a51c14); }
+  .die.blue { background: linear-gradient(145deg, #4f84e6, #1c3fa5); }
+  .die i { width: 8px; height: 8px; border-radius: 50%; align-self: center; justify-self: center; visibility: hidden;
+           background: #fff; box-shadow: inset 0 1px 1px rgba(0,0,0,.35); }
+  .die i.on { visibility: visible; }
+  .die.blank::after { content: '?'; grid-area: 2 / 2; color: rgba(255,255,255,.6); font-weight: bold; font-size: 20px; line-height: 1; place-self: center; }
+  .die.rolling { animation: tumble 1s cubic-bezier(.25, .8, .35, 1) both; }
+  @keyframes tumble {
+    0%   { transform: translate(0, -34px) rotate(0deg) scale(.6); }
+    25%  { transform: translate(4px, 6px) rotate(380deg) scale(1.12); }
+    45%  { transform: translate(-3px, -12px) rotate(560deg) scale(1); }
+    65%  { transform: translate(2px, 2px) rotate(670deg) scale(1.05); }
+    82%  { transform: translate(0, -3px) rotate(710deg); }
+    100% { transform: translate(0, 0) rotate(720deg) scale(1); }
+  }
+  .die.won  { transform: scale(1.12); box-shadow: 0 0 0 3px #ffcc22, 0 0 14px 4px rgba(255, 204, 34, .8); }
+  .die.lost { opacity: .35; filter: grayscale(.7); transform: scale(.88); }
+  .die.unused { opacity: .55; }
+  .battle-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; flex-wrap: wrap; }
+  .dice-choice { display: flex; gap: 6px; }
+  .dice-choice button { padding: 4px 10px; font-size: .9em; }
+  .dice-choice button.chosen { background: #a51c14; border-color: #6a120c; color: #fff; }
+  .dice-choice button:disabled { opacity: .35; cursor: not-allowed; }
+  .def-note { font-size: .85em; font-style: italic; color: #1c3fa5; }
+  .result { text-align: center; font-weight: bold; min-height: 1.4em; margin: 12px 0 4px; }
+  .result.win { color: #2d6a1e; }
+  .result.loss { color: #a51c14; }
+  #battle-occupy p { margin: 6px 0; text-align: center; }
+  #victory-dialog { text-align: center; }
+  #victory-dialog .trophy { font-size: 64px; animation: pop .6s ease-out; }
+  #victory-dialog h2 { display: flex; align-items: center; justify-content: center; gap: .4em; }
+  #victory-dialog .buttons { justify-content: center; }
+  @keyframes pop { 0% { transform: scale(0) rotate(-20deg); } 70% { transform: scale(1.2) rotate(8deg); } 100% { transform: none; } }
+  @media (prefers-reduced-motion: reduce) { .die.rolling { animation-duration: 1s; animation-name: none; } }
+  #info .empty { color: #59452f; font-style: italic; font-weight: normal; }
+  /* AI players */
+  #ai-status { display: inline-flex; align-items: center; gap: .4em; margin-left: .6em; padding: .1em .6em;
+    border-radius: 999px; background: #3b2a1a; color: #f3e6c8; font-size: max(11px, .55em); font-variant: normal;
+    letter-spacing: .05em; white-space: nowrap; vertical-align: middle; }
+  #ai-status[hidden] { display: none; }
+  .battle-controls[hidden] { display: none; }
+  #ai-status .gear { display: inline-block; animation: spin 2s linear infinite; }
+  #ai-status .dots { display: inline-block; width: 1em; }
+  #ai-status .dots::after { content: ''; animation: dots 1.2s steps(4) infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
+  body.ai-turn #board { cursor: wait !important; }
+  #battle-dialog.ai #battle-controls, #battle-dialog.ai .buttons button, #battle-dialog.ai #occupy-range { pointer-events: none; }
+  #battle-dialog.ai #battle-retreat { display: none; }
+  #battle-ai-note { margin: 10px 0 0; text-align: center; font-style: italic; opacity: .8; }
+  .ai-toggle { display: inline-flex; align-items: center; gap: .3em; font-size: .85em; cursor: pointer; white-space: nowrap; }
+  .player-row .name-line { display: flex; align-items: center; gap: 10px; }
+  .player-row .name-line input[type=text] { flex: 1; min-width: 0; }
+  .ai-badge { font-size: .8em; }
+</style>
+</head>
+<body>
+<div id="side">
+  <div id="side-header"><div id="title">CONQUEST</div>
+    <button id="settings-button" title="Settings" aria-label="Settings">&#9881;</button></div>
+  <section id="players-panel" aria-labelledby="players-title">
+    <h2 id="players-title">Players</h2><ul id="players-list"></ul>
+  </section>
+  <section id="event-panel" aria-labelledby="event-title">
+    <h2 id="event-title">Battle chronicle</h2><ol id="event-log" aria-label="Recent events, newest first"></ol>
+  </section>
+</div>
+<div id="board-frame"><canvas id="board"></canvas><div id="turn-toast" aria-live="polite"></div></div>
+<div id="info">
+  <div id="turn"><span id="turn-chip" class="chip"></span>
+    <span><span id="turn-player" class="name"></span><span id="ai-status" hidden aria-live="polite"><span class="gear">&#9881;</span><span id="ai-status-text"></span><span class="dots"></span></span><span id="turn-round" class="sub"></span></span></div>
+  <div><span id="hover-chip" class="chip mini"></span><span id="hover-name" class="name empty">—</span></div>
+  <div><span class="label">Selected</span><span id="selected-chip" class="chip mini"></span><span id="selected-name" class="name empty">none</span></div>
+  <div class="neighbours"><span class="label">Borders</span><span id="neighbour-names" class="empty">—</span></div>
+  <button id="end-turn" title="End your turn without moving">End turn &#10148;</button>
+</div>
+
+<dialog id="settings-dialog">
+  <form method="dialog">
+    <h2>Settings</h2>
+    <fieldset>
+      <legend>Map size</legend>
+      <div id="map-size-options" class="options"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Number of players</legend>
+      <div id="player-count-options" class="options"></div>
+    </fieldset>
+    <fieldset>
+      <legend>Players</legend>
+      <p class="uniform-note">Pick each player's nation (WW1 uniform, capital landmark and flag) or &#127922; to be dealt a random one each new game.</p>
+      <div id="player-settings"></div>
+    </fieldset>
+    <div class="buttons">
+      <button type="button" id="new-game-button" title="Start a new game with a fresh map">New game</button>
+      <button value="close">Close</button>
+    </div>
+  </form>
+</dialog>
+
+<dialog id="handoff-dialog">
+  <form method="dialog">
+    <div class="ended" id="handoff-ended">Turn over</div>
+    <p class="summary" id="handoff-summary"></p>
+    <div class="next"><span id="handoff-chip" class="chip"></span><span id="handoff-next"></span></div>
+    <p>Pass the device &mdash; it's your turn. <span id="handoff-reinforce"></span></p>
+    <div class="buttons"><button value="start" class="primary" autofocus>Start turn</button></div>
+  </form>
+</dialog>
+
+<dialog id="troops-dialog">
+  <form method="dialog">
+    <h2 id="troops-title"></h2>
+    <p id="troops-text"></p>
+    <div class="range-row"><input type="range" id="troops-range"><output id="troops-value"></output></div>
+    <div class="buttons"><button value="cancel">Cancel</button><button value="ok" class="primary">March</button></div>
+  </form>
+</dialog>
+
+<dialog id="battle-dialog">
+  <h2>&#9876; Battle for <span id="battle-target"></span></h2>
+  <div class="battle">
+    <div class="side att">
+      <canvas id="battle-att-icon" class="battle-icon" width="104" height="104"></canvas>
+      <div class="who" id="battle-att-name"></div><div class="where">from <span id="battle-att-prov"></span></div>
+      <div class="troops" id="battle-att-troops"></div>
+    </div>
+    <div id="dice-rows" class="dice-rows" aria-live="polite"></div>
+    <div class="side def">
+      <canvas id="battle-def-icon" class="battle-icon" width="104" height="104"></canvas>
+      <div class="who" id="battle-def-name"></div><div class="where">in <span id="battle-def-prov"></span></div>
+      <div class="troops" id="battle-def-troops"></div>
+    </div>
+  </div>
+  <div id="battle-controls" class="battle-controls">
+    <div id="dice-choice" class="dice-choice"></div>
+    <div id="def-dice-note" class="def-note"></div>
+  </div>
+  <p id="battle-result" class="result"></p>
+  <div id="battle-occupy" hidden>
+    <p id="occupy-text"></p>
+    <div class="range-row"><input type="range" id="occupy-range"><output id="occupy-value"></output></div>
+  </div>
+  <div class="buttons">
+    <button type="button" id="battle-retreat">Call off</button>
+    <button type="button" id="battle-roll" class="primary">&#127922; Roll dice!</button>
+    <button type="button" id="battle-done" hidden>Stop attack</button>
+  </div>
+  <p id="battle-ai-note" hidden></p>
+</dialog>
+
+<dialog id="victory-dialog">
+  <form method="dialog">
+    <div class="trophy">&#127942;</div>
+    <h2><span id="victory-chip" class="chip"></span> <span id="victory-name"></span></h2>
+    <p id="victory-text"></p>
+    <div class="buttons"><button value="view" id="victory-view">&#128506; View map</button><button value="new" class="primary">New game</button></div>
+  </form>
+</dialog>
+
+<dialog id="confirm-dialog">
+  <form method="dialog">
+    <h2>&#9888; Start a new game?</h2>
+    <p id="confirm-text"></p>
+    <div class="buttons">
+      <button value="cancel">Cancel</button>
+      <button value="confirm" class="primary">Start new game</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+'use strict';
+
+// ---------- Config ----------
+const BASE_CONFIG = {
+  worldW: 1400,            // world units; the board scales this to fit the canvas
+  worldH: 900,
+  relaxIterations: 2,      // Lloyd relaxation: evens out cell sizes
+  landShare: 0.55,         // share of interior (non-frame) cells that become land
+  borderDetailRatio: 0.075,// min segment of wiggly borders, relative to cell size
+};
+
+const MAP_SIZES = {
+  small:  { label: 'Small',  provinces: 12 },
+  medium: { label: 'Medium', provinces: 24 },
+  large:  { label: 'Large',  provinces: 36 },
+};
+const PLAYER_COLORS = [
+  { id: 'crimson', label: 'Crimson', hex: '#b3202a' },
+  { id: 'azure',   label: 'Azure',   hex: '#2a5bc7' },
+  { id: 'gold',    label: 'Gold',    hex: '#e0b020' },
+  { id: 'violet',  label: 'Violet',  hex: '#6c3aa0' },
+  { id: 'orange',  label: 'Orange',  hex: '#e2701b' },
+  { id: 'teal',    label: 'Teal',    hex: '#11898c' },
+  { id: 'ebony',   label: 'Ebony',   hex: '#262626' },
+  { id: 'ivory',   label: 'Ivory',   hex: '#87949b' },
+];
+const PLAYER_NAME_MAX = 20;
+const PLAYER_COUNTS = [2, 3, 4];
+const MAX_PLAYERS = Math.max(...PLAYER_COUNTS);
+// players always holds MAX_PLAYERS entries; only the first playerCount take part in the game.
+const DEFAULT_SETTINGS = {
+  mapSize: 'medium',
+  playerCount: 2,
+  players: [{ name: 'Player 1', color: 'crimson', ai: false, country: 'random' }, { name: 'Player 2', color: 'azure', ai: false, country: 'random' },
+            { name: 'Player 3', color: 'gold', ai: false, country: 'random' }, { name: 'Player 4', color: 'teal', ai: false, country: 'random' }],
+};
+const colorHex = id => PLAYER_COLORS.find(c => c.id === id).hex;
+
+// Derives the Voronoi site grid from the wanted province count, keeping ~square cells.
+// The outer ring of sites is always sea, so only the interior can become land.
+function worldConfig(provinces, seed) {
+  const aspect = BASE_CONFIG.worldW / BASE_CONFIG.worldH;
+  const interior = provinces / BASE_CONFIG.landShare;
+  const innerCols = Math.max(3, Math.round(Math.sqrt(interior * aspect)));
+  const innerRows = Math.max(2, Math.ceil(interior / innerCols));
+  const siteCols = innerCols + 2, siteRows = innerRows + 2;
+  return { ...BASE_CONFIG, seed, landCells: provinces, siteCols, siteRows,
+           borderDetail: (BASE_CONFIG.worldW / siteCols) * BASE_CONFIG.borderDetailRatio };
+}
+
+// ---------- Seeded RNG (mulberry32) ----------
+function makeRng(seed) {
+  let a = seed >>> 0;
+  return function () {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// ---------- Fictional European-style name generator ----------
+const NAME_PARTS = {
+  starts: ['Al', 'Ber', 'Bran', 'Cor', 'Dal', 'Dra', 'Eld', 'Fal', 'Gal', 'Gor', 'Hal', 'Ister', 'Kar',
+           'Kel', 'Lor', 'Lus', 'Mar', 'Mol', 'Nor', 'Oster', 'Pol', 'Ras', 'Sal', 'Sev', 'Sil', 'Tar',
+           'Tor', 'Val', 'Vel', 'Ves', 'Wal', 'Zar', 'Bel', 'Mor', 'Strel', 'Thal', 'Lim', 'Rav'],
+  middles: ['', '', '', 'a', 'e', 'i', 'o', 'en', 'an', 'ov', 'er', 'el', 'ar', 'in'],
+  suffixes: ['ia', 'onia', 'avia', 'ovia', 'esia', 'ania', 'land', 'mark', 'burg', 'berg', 'stein',
+             'heim', 'gard', 'ovina', 'enia', 'aria', 'ium', 'ica', 'ein', 'lund', 'wald', 'ria', 'garia'],
+  prefixes: ['Upper ', 'Lower ', 'East ', 'West ', 'North ', 'South ', 'Greater '],
+};
+
+// Real names that the generator could accidentally produce; rejected if generated.
+const REAL_NAMES = new Set([
+  'albania', 'romania', 'bulgaria', 'slovenia', 'estonia', 'latvia', 'lithuania', 'serbia', 'croatia',
+  'bosnia', 'moravia', 'bohemia', 'silesia', 'galicia', 'polonia', 'pomerania', 'bavaria', 'austria',
+  'italia', 'iberia', 'andalusia', 'catalonia', 'macedonia', 'moldavia', 'wallachia', 'transylvania',
+  'germania', 'gallia', 'dalmatia', 'istria', 'calabria', 'carinthia', 'styria', 'livonia', 'courland',
+  'finland', 'iceland', 'ireland', 'holland', 'scotland', 'england', 'poland', 'denmark', 'friesland',
+  'lorraine', 'normandy', 'hamburg', 'magdeburg', 'brandenburg', 'luxembourg', 'salzburg', 'wurttemberg',
+  'liechtenstein', 'holstein', 'mannheim', 'valencia', 'galia', 'thuringia', 'saxonia', 'helvetia',
+  'castilia', 'sardinia', 'malta', 'corsica', 'armenia', 'georgia', 'russia', 'prussia', 'kalmar',
+  'herzegovina', 'bukovina', 'valaria', 'tarragona', 'marburg', 'strasbourg', 'mainz', 'lund',
+  'aragonia', 'valonia', 'wallonia', 'kosovo', 'montenegro', 'bergen', 'galland', 'belgia', 'salonia',
+]);
+
+function generateBaseName(rng) {
+  const pick = arr => arr[Math.floor(rng() * arr.length)];
+  // Join parts; where a vowel meets a vowel at the seam, drop the left one (Gal+a+ania -> Galania).
+  const join = (a, b) => (/[aeiou]$/.test(a) && /^[aeiou]/.test(b) ? a.slice(0, -1) + b : a + b);
+  const name = [pick(NAME_PARTS.starts), pick(NAME_PARTS.middles), pick(NAME_PARTS.suffixes)].reduce(join);
+  return name.charAt(0).toUpperCase() + name.slice(1);
+}
+
+function generateUniqueNames(count, rng) {
+  const names = new Set();
+  let attempts = 0;
+  while (names.size < count) {
+    if (++attempts > count * 1000) throw new Error(`Name generator exhausted after ${attempts} attempts (got ${names.size}/${count}). Add more NAME_PARTS.`);
+    let name = generateBaseName(rng);
+    if (name.length < 5 || name.length > 12) continue;
+    if (REAL_NAMES.has(name.toLowerCase())) continue;
+    if (rng() < 0.12) name = NAME_PARTS.prefixes[Math.floor(rng() * NAME_PARTS.prefixes.length)] + name;
+    names.add(name);
+  }
+  return [...names];
+}
+
+// ---------- Geometry: Voronoi cells via half-plane clipping ----------
+// A polygon is [{x, y, e}] where e = id of the neighbouring site across the edge
+// from this vertex to the next one (-1 = outer world boundary).
+function clipPolygon(poly, nx, ny, d, label) {
+  const out = [];
+  const inside = p => nx * p.x + ny * p.y <= d;
+  for (let k = 0; k < poly.length; k++) {
+    const cur = poly[k], nxt = poly[(k + 1) % poly.length];
+    const cin = inside(cur), nin = inside(nxt);
+    if (cin) out.push(cur);
+    if (cin !== nin) {
+      const a = nx * cur.x + ny * cur.y - d, b = nx * nxt.x + ny * nxt.y - d;
+      const t = a / (a - b);
+      out.push({ x: cur.x + (nxt.x - cur.x) * t, y: cur.y + (nxt.y - cur.y) * t, e: cin ? label : cur.e });
+    }
+  }
+  return out;
+}
+
+function voronoiCells(sites, W, H) {
+  return sites.map((s, i) => {
+    let poly = [{ x: 0, y: 0, e: -1 }, { x: W, y: 0, e: -1 }, { x: W, y: H, e: -1 }, { x: 0, y: H, e: -1 }];
+    sites.forEach((o, j) => {
+      if (j === i) return;
+      const nx = o.x - s.x, ny = o.y - s.y;
+      poly = clipPolygon(poly, nx, ny, (o.x * o.x + o.y * o.y - s.x * s.x - s.y * s.y) / 2, j);
+    });
+    // Drop degenerate (near-zero length) edges so a point contact never counts as a border.
+    return poly.filter((p, k) => {
+      const q = poly[(k + 1) % poly.length];
+      return Math.hypot(q.x - p.x, q.y - p.y) > 1e-6;
+    });
+  });
+}
+
+function polygonCentroid(poly) {
+  let a = 0, cx = 0, cy = 0;
+  for (let k = 0; k < poly.length; k++) {
+    const p = poly[k], q = poly[(k + 1) % poly.length], c = p.x * q.y - q.x * p.y;
+    a += c; cx += (p.x + q.x) * c; cy += (p.y + q.y) * c;
+  }
+  return { x: cx / (3 * a), y: cy / (3 * a) };
+}
+
+// Wiggly border between two cells (mapgen2-style "noisy edges"). The curve stays inside
+// the quad (A, siteLo, C, siteHi), so borders never cross each other.
+function noisyEdge(A, B, C, D, minLen, rng, out) {
+  if (Math.hypot(C.x - A.x, C.y - A.y) < minLen) { out.push(C); return; }
+  const lerp = (p, q, t) => ({ x: p.x + (q.x - p.x) * t, y: p.y + (q.y - p.y) * t });
+  const p = 0.2 + rng() * 0.6, q = 0.2 + rng() * 0.6;
+  const E = lerp(A, D, p), F = lerp(B, C, p), G = lerp(A, B, q), I = lerp(D, C, q);
+  const Hm = lerp(E, F, q);
+  noisyEdge(A, G, Hm, E, minLen, rng, out);
+  noisyEdge(Hm, F, C, I, minLen, rng, out);
+}
+
+// ---------- World model ----------
+function generateSites(cfg, rng) {
+  const sites = [];
+  const cw = cfg.worldW / cfg.siteCols, ch = cfg.worldH / cfg.siteRows;
+  for (let r = 0; r < cfg.siteRows; r++)
+    for (let c = 0; c < cfg.siteCols; c++)
+      sites.push({ x: (c + 0.15 + rng() * 0.7) * cw, y: (r + 0.15 + rng() * 0.7) * ch });
+  let cells = voronoiCells(sites, cfg.worldW, cfg.worldH);
+  for (let it = 0; it < cfg.relaxIterations; it++) {
+    cells.forEach((poly, i) => { sites[i] = polygonCentroid(poly); });
+    cells = voronoiCells(sites, cfg.worldW, cfg.worldH);
+  }
+  return { sites, cells };
+}
+
+// Smooth "elevation": a few random blobs + wavy noise, fading out near the world edge.
+function makeLandScore(cfg, rng) {
+  const W = cfg.worldW, H = cfg.worldH;
+  // Blobs spread left-to-right so the continent spans the board instead of clumping on one side.
+  const blobs = Array.from({ length: 5 }, (_, k) => ({
+    x: W * (0.15 + (k + rng()) * 0.14), y: H * (0.25 + rng() * 0.5), r: Math.min(W, H) * (0.2 + rng() * 0.15) }));
+  const waves = Array.from({ length: 5 }, () => ({
+    fx: (1 + rng() * 4) * Math.PI / W, fy: (1 + rng() * 4) * Math.PI / H, px: rng() * 6.3, py: rng() * 6.3 }));
+  return (x, y) => {
+    let s = 0;
+    for (const b of blobs) s += Math.exp(-((x - b.x) ** 2 + (y - b.y) ** 2) / (b.r * b.r));
+    for (const w of waves) s += 0.15 * Math.sin(x * w.fx + w.px) * Math.sin(y * w.fy + w.py);
+    const edge = Math.min(x / W, 1 - x / W, y / H, 1 - y / H);   // 0 at boundary, 0.5 at centre
+    return s - Math.max(0, 0.12 - edge) * 12;
+  };
+}
+
+// "Flood the continent": start at the highest cell, repeatedly annex the highest bordering cell.
+// Guarantees one connected landmass of exactly `count` cells.
+function growLand(sites, siteAdj, score, count, isSea) {
+  const h = sites.map((s, i) => (isSea[i] ? -Infinity : score(s.x, s.y)));
+  const start = h.indexOf(Math.max(...h));
+  const land = new Set([start]), frontier = new Set(siteAdj[start]);
+  while (land.size < count && frontier.size) {
+    const next = [...frontier].reduce((a, b) => (h[b] > h[a] ? b : a));
+    frontier.delete(next);
+    land.add(next);
+    siteAdj[next].forEach(n => { if (!land.has(n) && !isSea[n]) frontier.add(n); });
+  }
+  return [...land];
+}
+
+function createWorld(cfg) {
+  const rng = makeRng(cfg.seed);
+  const { sites, cells } = generateSites(cfg, rng);
+  const score = makeLandScore(cfg, rng);
+
+  // Site-level adjacency (symmetrised; exact Voronoi is symmetric, this guards float noise).
+  const siteAdj = sites.map(() => new Set());
+  cells.forEach((poly, i) => poly.forEach(p => { if (p.e >= 0) { siteAdj[i].add(p.e); siteAdj[p.e].add(i); } }));
+
+  const touchesWorldEdge = cells.map(poly => poly.some(p => p.e < 0));   // always sea: keeps coasts off the frame
+  const land = growLand(sites, siteAdj, score, cfg.landCells, touchesWorldEdge)
+    .sort((a, b) => sites[a].y - sites[b].y || sites[a].x - sites[b].x);
+  if (land.length !== cfg.landCells)
+    console.warn(`[world] seed ${cfg.seed}: expected ${cfg.landCells} provinces, grew ${land.length}. ` +
+                 `Interior grid ${cfg.siteCols - 2}x${cfg.siteRows - 2} too small? Check worldConfig().`);
+
+  // Shared wiggly borders: computed once per site pair, reused (reversed) by the other cell.
+  const edgeCache = new Map();
+  function borderPoints(i, j, from, to) {
+    const lo = Math.min(i, j), hi = Math.max(i, j), key = lo * 100000 + hi;
+    if (!edgeCache.has(key)) {
+      const [A, C] = i === lo ? [from, to] : [to, from];
+      const pts = [A];
+      noisyEdge(A, sites[lo], C, sites[hi], cfg.borderDetail, makeRng(cfg.seed ^ (key * 2654435761)), pts);
+      edgeCache.set(key, pts);
+    }
+    const pts = edgeCache.get(key);
+    return i === lo ? pts : [...pts].reverse();
+  }
+
+  const siteToProvince = new Map(land.map((s, id) => [s, id]));
+  const names = generateUniqueNames(land.length, rng);
+  const provinces = land.map((s, id) => {
+    const poly = cells[s], outline = [];
+    poly.forEach((p, k) => {
+      const q = poly[(k + 1) % poly.length];
+      const seg = p.e >= 0 ? borderPoints(s, p.e, p, q) : [p, q];
+      outline.push(...seg.slice(0, -1));
+    });
+    return {
+      id, name: names[id], site: sites[s], outline,
+      neighbours: [...siteAdj[s]].filter(j => siteToProvince.has(j)).map(j => siteToProvince.get(j)).sort((a, b) => a - b),
+      coastal: [...siteAdj[s]].some(j => !siteToProvince.has(j)),
+      shade: rng() * 2 - 1,                 // -1..1: slight light/dark variation so provinces of one state differ
+    };
+  });
+  return { width: cfg.worldW, height: cfg.worldH, provinces };
+}
+
+// ---------- Initial territory split ----------
+function isConnected(ids, provinces) {
+  if (ids.size === 0) return true;
+  const start = ids.values().next().value, seen = new Set([start]), stack = [start];
+  while (stack.length)
+    for (const n of provinces[stack.pop()].neighbours)
+      if (ids.has(n) && !seen.has(n)) { seen.add(n); stack.push(n); }
+  return seen.size === ids.size;
+}
+
+// True if every pair of states shares at least one border: no state sits "between" two others.
+function statesAllTouch(owners, provinces, count) {
+  const pairs = new Set();
+  provinces.forEach(p => p.neighbours.forEach(m => {
+    const a = owners[p.id], b = owners[m];
+    if (a !== b) pairs.add(Math.min(a, b) * count + Math.max(a, b));
+  }));
+  return pairs.size === (count * (count - 1)) / 2;
+}
+
+// Splits the map into `count` contiguous states of equal size (+-1) where every state borders every other.
+// 2-3 players: seeds are placed around the land centre like pie slices, so all states meet in the middle.
+// 4 players: four states can only all touch each other if one of them is landlocked (planarity: the sea
+// borders the outer three), so a core state is grown from inland provinces first and the other three
+// are seeded around it. States grow in turns (the least filled first), each picking the frontier province
+// closest to its seed -> compact, contiguous states. Randomised attempts are checked; returns
+// owners[provinceId] = player index (slices shuffled between players), or null if this map can't be split.
+function partitionIntoStates(provinces, rng, count = 2) {
+  const n = provinces.length, ids = provinces.map(p => p.id);
+  const pairs = provinces.flatMap(p => p.neighbours.map(m => Math.hypot(p.site.x - provinces[m].site.x, p.site.y - provinces[m].site.y)));
+  const spacing = pairs.reduce((x, y) => x + y, 0) / pairs.length;       // mean distance between neighbours
+  const sizes = Array.from({ length: count }, (_, k) => Math.floor(n / count) + (k < n % count ? 1 : 0));
+  const dist = (id, x, y) => Math.hypot(provinces[id].site.x - x, provinces[id].site.y - y);
+  const centreOf = set => {
+    const xs = [...set];
+    return [xs.reduce((a, id) => a + provinces[id].site.x, 0) / xs.length, xs.reduce((a, id) => a + provinces[id].site.y, 0) / xs.length];
+  };
+  const nearest = (pool, x, y) => pool.reduce((a, b) => (dist(b, x, y) < dist(a, x, y) ? b : a));
+
+  // Grows states 0..seeds.length-1 from their seeds inside `allowed` until each reaches sizes[k].
+  function grow(owners, seeds, allowed) {
+    const filled = seeds.map(() => 1), base = owners.slice();
+    seeds.forEach((sd, k) => { owners[sd] = k + (count - seeds.length); });
+    const offset = count - seeds.length;
+    let left = seeds.reduce((a, _, k) => a + sizes[k + offset] - 1, 0);
+    while (left > 0) {
+      const order = seeds.map((_, k) => k).filter(k => filled[k] < sizes[k + offset])
+        .sort((a, b) => filled[a] / sizes[a + offset] - filled[b] / sizes[b + offset]);
+      let grew = false;
+      for (const k of order) {
+        const frontier = ids.filter(id => owners[id] === -1 && allowed(id) && provinces[id].neighbours.some(m => owners[m] === k + offset));
+        if (!frontier.length) continue;
+        const s0 = provinces[seeds[k]].site;
+        const best = frontier.map(id => ({ id, score: provinces[id].neighbours.filter(m => owners[m] === k + offset).length -
+                                                      1.2 * dist(id, s0.x, s0.y) / spacing + rng() * 0.6 }))
+                             .reduce((a, b) => (b.score > a.score ? b : a));
+        owners[best.id] = k + offset; filled[k]++; left--; grew = true;
+        break;
+      }
+      if (!grew) { owners.splice(0, n, ...base); return false; }  // a state got boxed in
+    }
+    return true;
+  }
+
+  const [cx, cy] = centreOf(ids);
+  for (let attempt = 0; attempt < 150; attempt++) {
+    const owners = new Array(n).fill(-1);
+    let ringCount = count, rx = cx, ry = cy, pool = ids, radius = spacing * (0.6 + rng() * 0.8);
+    if (count === 4) {
+      // Core state (index 0) from inland provinces only, started near the centre.
+      const inland = ids.filter(id => !provinces[id].coastal);
+      if (inland.length < sizes[0]) return null;
+      const byCentre = [...inland].sort((a, b) => dist(a, cx, cy) - dist(b, cx, cy));
+      const core = byCentre[Math.floor(rng() * Math.min(3, byCentre.length))];
+      owners[core] = 0;
+      let size = 1;
+      while (size < sizes[0]) {
+        const frontier = inland.filter(id => owners[id] === -1 && provinces[id].neighbours.some(m => owners[m] === 0));
+        if (!frontier.length) break;
+        const best = frontier.map(id => ({ id, score: provinces[id].neighbours.filter(m => owners[m] === 0).length -
+                                                      1.5 * dist(id, provinces[core].site.x, provinces[core].site.y) / spacing + rng() * 0.6 }))
+                             .reduce((a, b) => (b.score > a.score ? b : a));
+        owners[best.id] = 0; size++;
+      }
+      if (size < sizes[0]) continue;
+      const coreSet = new Set(ids.filter(id => owners[id] === 0));
+      [rx, ry] = centreOf(coreSet);
+      pool = ids.filter(id => owners[id] === -1 && provinces[id].neighbours.some(m => owners[m] === 0));   // ring around the core
+      ringCount = 3;
+      radius = spacing * 3;
+    }
+    // Ring seeds at evenly spread angles (with jitter) around the centre / core.
+    const a0 = rng() * Math.PI * 2, seeds = [];
+    for (let k = 0; k < ringCount; k++) {
+      const a = a0 + (k * 2 * Math.PI) / ringCount + (rng() - 0.5) * 0.5;
+      const free = pool.filter(id => !seeds.includes(id));
+      if (!free.length) break;
+      seeds.push(nearest(free, rx + radius * Math.cos(a), ry + radius * Math.sin(a)));
+    }
+    if (seeds.length !== ringCount || !grow(owners, seeds, () => true)) continue;
+    if (!statesAllTouch(owners, provinces, count)) continue;
+    if (!Array.from({ length: count }, (_, k) => k).every(k => isConnected(new Set(ids.filter(id => owners[id] === k)), provinces))) continue;
+    const players = Array.from({ length: count }, (_, k) => k);
+    for (let i = count - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [players[i], players[j]] = [players[j], players[i]]; }
+    return owners.map(o => players[o]);
+  }
+  return null;
+}
+
+// ---------- Rendering ----------
+const canvas = document.getElementById('board');
+const ctx = canvas.getContext('2d');
+const hoverEl = document.getElementById('hover-name');
+const selectedEl = document.getElementById('selected-name');
+const neighboursEl = document.getElementById('neighbour-names');
+
+let world = null, paths = [], tokenRadius = 20;
+
+// Token size follows province size: a fraction of the mean distance between neighbouring centres.
+function computeTokenRadius(w) {
+  const d = w.provinces.flatMap(p => p.neighbours.map(m => Math.hypot(p.site.x - w.provinces[m].site.x, p.site.y - w.provinces[m].site.y)));
+  return Math.min(30, 0.17 * d.reduce((a, b) => a + b, 0) / d.length);
+}
+// provinceStates[provinceId] = { owner: playerIndex } -- mutable per-game data (world.provinces is static geometry).
+// provinceStates[id].soldiers = army size stationed there.
+// phase/reinforcementsLeft/placed/turnLog/battle: see "Turns" section.
+const state = { hoveredId: null, selectedId: null, view: null, seed: null, currentPlayer: 0, round: 1,
+                provinceStates: [], phase: 'reinforce', reinforcementsLeft: 0, placed: {}, turnLog: [], battle: null,
+                aiControlled: false, aiIntent: null, unseenLog: [], eventLog: [], attacks: 0,
+                capitals: [], out: [] };
+
+const ownerOf = id => state.provinceStates[id]?.owner;
+// Provinces of a player whose capital fell turn rogue: grey, no reinforcements, never attack.
+const ROGUE = -1, ROGUE_HEX = '#8c8478';
+const ownerColor = id => playerHex(ownerOf(id));
+
+function hexLuminance(hex) {
+  const [r, g, b] = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+}
+
+// Two-tone patterns stay readable over every ownership colour; crossing lines mean attack.
+const hatchPatterns = {};
+function getHatchPattern(kind = 'move') {
+  if (hatchPatterns[kind]) return hatchPatterns[kind];
+  const c = document.createElement('canvas');
+  c.width = c.height = 16;
+  const g = c.getContext('2d');
+  const cross = kind === 'attack';
+  g.beginPath();
+  g.moveTo(-4, 4); g.lineTo(4, -4); g.moveTo(0, 16); g.lineTo(16, 0); g.moveTo(12, 20); g.lineTo(20, 12);
+  if (cross) {
+    g.moveTo(-4, 12); g.lineTo(4, 20); g.moveTo(0, 0); g.lineTo(16, 16); g.moveTo(12, -4); g.lineTo(20, 4);
+  }
+  g.strokeStyle = cross ? 'rgba(255, 248, 232, .8)' : 'rgba(38, 29, 20, .65)';
+  g.lineWidth = cross ? 3.5 : 4;
+  g.stroke();
+  g.strokeStyle = cross ? 'rgba(38, 29, 20, .85)' : 'rgba(255, 248, 232, .95)';
+  g.lineWidth = cross ? 1.5 : 2;
+  g.stroke();
+  hatchPatterns[kind] = ctx.createPattern(c, 'repeat');
+  return hatchPatterns[kind];
+}
+
+function buildPaths(w) {
+  return w.provinces.map(p => {
+    const path = new Path2D();
+    p.outline.forEach((pt, k) => (k ? path.lineTo(pt.x, pt.y) : path.moveTo(pt.x, pt.y)));
+    path.closePath();
+    return path;
+  });
+}
+
+// ---------- Terrain decoration ----------
+// Cosmetic only, seeded per map: each province gets a landscape (mountains, hills, forest or plains)
+// drawn as small translucent ink glyphs; rivers run from inland provinces to the sea. Glyphs keep clear of the soldier token, province edges and rivers.
+// Everything is built once per map into a few Path2D layers, so redrawing stays cheap.
+const TERRAIN_TYPES = ['mountains', 'hills', 'forest', 'plains'];
+let terrain = { types: [], layers: null };
+
+function pointInPolygon(pt, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[i], b = poly[j];
+    if ((a.y > pt.y) !== (b.y > pt.y) && pt.x < ((b.x - a.x) * (pt.y - a.y)) / (b.y - a.y) + a.x) inside = !inside;
+  }
+  return inside;
+}
+function distToPolygonEdge(pt, poly) {
+  let best = Infinity;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const a = poly[j], b = poly[i], dx = b.x - a.x, dy = b.y - a.y;
+    const t = Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+    best = Math.min(best, Math.hypot(pt.x - a.x - t * dx, pt.y - a.y - t * dy));
+  }
+  return best;
+}
+const polygonArea = poly => Math.abs(poly.reduce((s, p, i) => {
+  const q = poly[(i + 1) % poly.length];
+  return s + p.x * q.y - q.x * p.y;
+}, 0)) / 2;
+// Soldier token footprint (pill around the site) plus a margin.
+const nearToken = (pt, prov, margin) =>
+  Math.abs(pt.x - prov.site.x) < 1.75 * tokenRadius + margin && Math.abs(pt.y - prov.site.y) < tokenRadius + margin;
+
+// Clustered landscapes: a few random centres, each province takes the type of the nearest one.
+// Mountains only grow from inland provinces (if the map has any), so coasts stay low.
+function assignTerrain(w, rng) {
+  const provs = w.provinces, inland = provs.filter(p => !p.coastal);
+  const centres = Array.from({ length: Math.max(4, Math.round(provs.length / 4)) }, (_, k) => {
+    const type = TERRAIN_TYPES[k % TERRAIN_TYPES.length];
+    const pool = type === 'mountains' && inland.length ? inland : provs;
+    return { site: pool[Math.floor(rng() * pool.length)].site, type };
+  });
+  return provs.map(p => centres.reduce((best, c) => {
+    const d = Math.hypot(c.site.x - p.site.x, c.site.y - p.site.y) * (0.8 + rng() * 0.4);
+    return d < best.d ? { d, type: c.type } : best;
+  }, { d: Infinity }).type);
+}
+
+// Random free spots for glyphs inside a province: not on the token, the edges or earlier glyphs.
+function scatterSpots(prov, count, size, rng, taken) {
+  const xs = prov.outline.map(p => p.x), ys = prov.outline.map(p => p.y);
+  const minX = Math.min(...xs), maxX = Math.max(...xs), minY = Math.min(...ys), maxY = Math.max(...ys), out = [];
+  for (let tries = 0; out.length < count && tries < count * 40; tries++) {
+    const pt = { x: minX + rng() * (maxX - minX), y: minY + rng() * (maxY - minY), size };
+    if (nearToken(pt, prov, size * 1.1) || !pointInPolygon(pt, prov.outline)) continue;
+    if (distToPolygonEdge(pt, prov.outline) < size * 0.9) continue;
+    if (taken.some(q => Math.hypot(q.x - pt.x, q.y - pt.y) < (q.size + size) * 0.8)) continue;
+    out.push(pt); taken.push(pt);
+  }
+  return out;
+}
+
+// Rivers: from the most inland (preferably mountainous) provinces downhill to the coast, crossing
+// provinces through their shared borders. A river reaching another river joins it.
+function buildRivers(w, types, rng) {
+  const provs = w.provinces, r = tokenRadius;
+  const vkey = v => `${v.x.toFixed(3)},${v.y.toFixed(3)}`;
+  const users = new Map();
+  provs.forEach(p => p.outline.forEach(v => {
+    const k = vkey(v);
+    if (!users.has(k)) users.set(k, new Set());
+    users.get(k).add(p.id);
+  }));
+  const dist = new Array(provs.length).fill(Infinity), queue = provs.filter(p => p.coastal).map(p => p.id);
+  queue.forEach(id => { dist[id] = 0; });
+  while (queue.length) {
+    const id = queue.shift();
+    provs[id].neighbours.forEach(n => { if (dist[n] === Infinity) { dist[n] = dist[id] + 1; queue.push(n); } });
+  }
+  const borderPoint = (a, b) => {
+    const mid = { x: (provs[a].site.x + provs[b].site.x) / 2, y: (provs[a].site.y + provs[b].site.y) / 2 };
+    const shared = provs[a].outline.filter(v => users.get(vkey(v)).has(b));
+    const inner = shared.filter(v => users.get(vkey(v)).size === 2);   // skip three-province corners
+    return (inner.length ? inner : shared).reduce((best, v) =>
+      Math.hypot(v.x - mid.x, v.y - mid.y) < Math.hypot(best.x - mid.x, best.y - mid.y) ? v : best);
+  };
+  // Straight runs through a province would cross its token: bend around it.
+  const viaFreeSide = (a, b, prov) => {
+    const dx = b.x - a.x, dy = b.y - a.y, t = Math.max(0, Math.min(1, ((prov.site.x - a.x) * dx + (prov.site.y - a.y) * dy) / (dx * dx + dy * dy || 1)));
+    const c = { x: a.x + t * dx, y: a.y + t * dy };
+    if (!nearToken(c, prov, r * 0.6)) return [];
+    const len = Math.hypot(dx, dy) || 1, nx = -dy / len, ny = dx / len;
+    const side = (c.x - prov.site.x) * nx + (c.y - prov.site.y) * ny >= 0 ? 1 : -1;
+    for (const s of [side, -side]) {
+      const wp = { x: prov.site.x + nx * s * r * 2.4, y: prov.site.y + ny * s * r * 2.4 };
+      if (pointInPolygon(wp, prov.outline)) return [wp];
+    }
+    return [];
+  };
+  const count = Math.max(1, Math.round(provs.length / 12)), onRiver = new Map(), rivers = [];
+  const weight = { mountains: 2, hills: 1, forest: 0, plains: 0 };
+  const sources = provs.map(p => p.id)
+    .sort((a, b) => dist[b] + weight[types[b]] - dist[a] - weight[types[a]] || rng() - 0.5);
+  for (const src of sources) {
+    if (rivers.length === count) break;
+    if (onRiver.has(src) || provs[src].neighbours.some(n => onRiver.has(n))) continue;
+    const spot = scatterSpots(provs[src], 1, r * 0.3, rng, [])[0];
+    if (!spot) continue;
+    const pts = [spot];
+    onRiver.set(src, spot);
+    let cur = src;
+    for (;;) {
+      if (dist[cur] === 0) {                          // coastal: run out to sea through a coast vertex
+        const coast = provs[cur].outline.filter(v => users.get(vkey(v)).size === 1);
+        if (!coast.length) break;
+        const last = pts.at(-1);
+        const mouth = coast.reduce((best, v) => (Math.hypot(v.x - last.x, v.y - last.y) < Math.hypot(best.x - last.x, best.y - last.y) ? v : best));
+        pts.push(...viaFreeSide(last, mouth, provs[cur]), mouth);
+        const dx = mouth.x - provs[cur].site.x, dy = mouth.y - provs[cur].site.y, l = Math.hypot(dx, dy) || 1;
+        pts.push({ x: mouth.x + (dx / l) * r * 0.8, y: mouth.y + (dy / l) * r * 0.8 });
+        break;
+      }
+      const down = provs[cur].neighbours.filter(n => dist[n] === dist[cur] - 1);
+      const next = down.find(n => onRiver.has(n)) ?? down[Math.floor(rng() * down.length)];
+      const bp = borderPoint(cur, next);
+      pts.push(...viaFreeSide(pts.at(-1), bp, provs[cur]), bp);
+      if (onRiver.has(next)) {                        // tributary: flow into the other river
+        pts.push(...viaFreeSide(bp, onRiver.get(next), provs[next]), onRiver.get(next));
+        break;
+      }
+      onRiver.set(next, bp);
+      cur = next;
+    }
+    // Meander: split every leg and nudge the midpoints sideways.
+    const meander = [pts[0]];
+    for (let k = 1; k < pts.length; k++) {
+      const a = pts[k - 1], b = pts[k], dx = b.x - a.x, dy = b.y - a.y, l = Math.hypot(dx, dy) || 1;
+      [1 / 3, 2 / 3].forEach(f => {
+        const j = (rng() - 0.5) * Math.min(l * 0.25, r * 0.9);
+        meander.push({ x: a.x + dx * f - (dy / l) * j, y: a.y + dy * f + (dx / l) * j });
+      });
+      meander.push(b);
+    }
+    rivers.push(meander);
+  }
+  return rivers;
+}
+
+function buildTerrain(w, seed) {
+  const rng = makeRng(seed ^ 0x7f4a7c15), r = tokenRadius;
+  const types = assignTerrain(w, rng), rivers = buildRivers(w, types, rng);
+  const L = { shade: new Path2D(), ink: new Path2D(), snow: new Path2D(), river: new Path2D() };
+  const taken = w.provinces.map(() => []);
+  rivers.forEach(river => {
+    const path = L.river;
+    path.moveTo(river[0].x, river[0].y);
+    for (let k = 1; k < river.length - 1; k++)
+      path.quadraticCurveTo(river[k].x, river[k].y, (river[k].x + river[k + 1].x) / 2, (river[k].y + river[k + 1].y) / 2);
+    path.lineTo(river.at(-1).x, river.at(-1).y);
+    for (let k = 1; k < river.length; k++)                   // keep glyphs off the water
+      for (let f = 0; f < 1; f += 0.25) {
+        const pt = { x: river[k - 1].x + (river[k].x - river[k - 1].x) * f, y: river[k - 1].y + (river[k].y - river[k - 1].y) * f, size: r * 0.35 };
+        w.provinces.forEach(p => { if (pointInPolygon(pt, p.outline)) taken[p.id].push(pt); });
+      }
+  });
+  const density = { mountains: [0.62, 0.3], hills: [0.48, 0.35], forest: [0.3, 1.1], plains: [0.3, 0.2] };   // [glyph size / token radius, glyphs per r^2]
+  w.provinces.forEach(p => {
+    const type = types[p.id], [rel, perArea] = density[type], size = r * rel;
+    const n = Math.max(1, Math.min(14, Math.round((polygonArea(p.outline) / (r * r)) * perArea * (0.7 + rng() * 0.5))));
+    scatterSpots(p, n, size, rng, taken[p.id]).sort((a, b) => a.y - b.y).forEach(({ x, y }) => {
+      if (type === 'mountains') {
+        const m = size * (0.85 + rng() * 0.3), base = y + 0.45 * m, top = y - 0.75 * m;
+        L.ink.moveTo(x - m, base); L.ink.lineTo(x, top); L.ink.lineTo(x + m, base);
+        L.shade.moveTo(x, top); L.shade.lineTo(x + m, base); L.shade.lineTo(x + 0.15 * m, base); L.shade.closePath();
+        L.snow.moveTo(x, top); L.snow.lineTo(x + 0.33 * m, y - 0.35 * m); L.snow.lineTo(x + 0.1 * m, y - 0.45 * m);
+        L.snow.lineTo(x - 0.1 * m, y - 0.33 * m); L.snow.lineTo(x - 0.33 * m, y - 0.35 * m); L.snow.closePath();
+      } else if (type === 'hills') {
+        const h = size * (0.8 + rng() * 0.4);
+        L.ink.moveTo(x - h, y + 0.3 * h); L.ink.quadraticCurveTo(x, y - 0.9 * h, x + h, y + 0.3 * h);
+        L.ink.moveTo(x + 0.2 * h, y - 0.12 * h); L.ink.quadraticCurveTo(x + 0.55 * h, y, x + 0.6 * h, y + 0.2 * h);
+      } else if (type === 'forest') {
+        const t = size * (0.8 + rng() * 0.4);
+        if (rng() < 0.6) {                                    // conifer
+          L.shade.moveTo(x, y - 1.3 * t); L.shade.lineTo(x + 0.6 * t, y + 0.35 * t); L.shade.lineTo(x - 0.6 * t, y + 0.35 * t); L.shade.closePath();
+          L.ink.moveTo(x, y - 1.3 * t); L.ink.lineTo(x + 0.6 * t, y + 0.35 * t); L.ink.lineTo(x - 0.6 * t, y + 0.35 * t); L.ink.closePath();
+        } else {                                              // broadleaf
+          L.shade.moveTo(x + 0.55 * t, y - 0.35 * t); L.shade.arc(x, y - 0.35 * t, 0.55 * t, 0, Math.PI * 2);
+          L.ink.moveTo(x + 0.55 * t, y - 0.35 * t); L.ink.arc(x, y - 0.35 * t, 0.55 * t, 0, Math.PI * 2);
+        }
+        L.ink.moveTo(x, y + 0.2 * t); L.ink.lineTo(x, y + 0.75 * t);
+      } else {                                                // plains: grass tufts
+        const g = size;
+        L.ink.moveTo(x - 0.25 * g, y); L.ink.lineTo(x - 0.45 * g, y - 0.45 * g);
+        L.ink.moveTo(x, y); L.ink.lineTo(x, y - 0.65 * g);
+        L.ink.moveTo(x + 0.25 * g, y); L.ink.lineTo(x + 0.45 * g, y - 0.45 * g);
+      }
+    });
+  });
+  console.info(`[terrain] ${TERRAIN_TYPES.map(t => `${t}=${types.filter(x => x === t).length}`).join(' ')} rivers=${rivers.length}`);
+  return { types, rivers, layers: L };
+}
+
+// Drawn in world coordinates after the province fills; px converts CSS pixels to world units.
+function drawTerrain(px) {
+  const L = terrain.layers;
+  if (!L) return;
+  ctx.save();
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = 'rgba(25, 45, 65, .55)'; ctx.lineWidth = px(4.2); ctx.stroke(L.river);
+  ctx.strokeStyle = '#8cc4e0'; ctx.lineWidth = px(2.4); ctx.stroke(L.river);
+  ctx.fillStyle = 'rgba(20, 14, 6, .3)'; ctx.fill(L.shade);
+  ctx.fillStyle = 'rgba(255, 252, 240, .85)'; ctx.fill(L.snow);
+  ctx.strokeStyle = 'rgba(255, 248, 225, .3)'; ctx.lineWidth = px(3); ctx.stroke(L.ink);   // light halo: readable on dark colours too
+  ctx.strokeStyle = 'rgba(25, 16, 6, .65)'; ctx.lineWidth = px(1.3); ctx.stroke(L.ink);
+  ctx.restore();
+}
+// ---------- Old map decoration ----------
+// One device-resolution engraving per seed/view. Never regenerate paper or search sea space on hover.
+let oldMapLayer = null;
+const MAP_INK = '#665138', MAP_PAPER = '#dfcea4';
+
+function paintMapPaper(g, w, h, rng) {
+  g.fillStyle = MAP_PAPER; g.fillRect(0, 0, w, h);
+  const wash = g.createLinearGradient(0, 0, w, h);
+  wash.addColorStop(0, '#e9dcb7'); wash.addColorStop(.5, '#e2d4ae'); wash.addColorStop(1, '#d6c499');
+  g.fillStyle = wash; g.fillRect(0, 0, w, h);
+  for (let i = 0; i < 32; i++) {
+    const x = rng() * w, y = rng() * h, r = 18 + rng() * Math.min(w, h) * .28;
+    const stain = g.createRadialGradient(x, y, 0, x, y, r);
+    stain.addColorStop(0, `rgba(124, 84, 36, ${.018 + rng() * .035})`); stain.addColorStop(1, 'rgba(124,84,36,0)');
+    g.fillStyle = stain; g.fillRect(x - r, y - r, r * 2, r * 2);
+  }
+  for (let i = 0; i < w * h / 38; i++) {
+    g.fillStyle = i % 2 ? 'rgba(255,250,223,.12)' : 'rgba(90,65,30,.055)';
+    g.fillRect(rng() * w, rng() * h, .4 + rng() * 1.2, .4 + rng());
+  }
+  const edge = g.createRadialGradient(w / 2, h / 2, Math.min(w, h) * .2, w / 2, h / 2, Math.hypot(w, h) / 2);
+  edge.addColorStop(0, 'rgba(85,52,19,0)'); edge.addColorStop(.7, 'rgba(85,52,19,.025)'); edge.addColorStop(1, 'rgba(85,52,19,.27)');
+  g.fillStyle = edge; g.fillRect(0, 0, w, h);
+}
+
+function paintMapFrame(g, w, h) {
+  g.strokeStyle = 'rgba(91,65,34,.5)'; g.lineWidth = .8;
+  g.strokeRect(10.5, 10.5, w - 21, h - 21); g.strokeRect(15.5, 15.5, w - 31, h - 31);
+  g.beginPath();
+  for (let x = 35; x < w - 25; x += 25) {
+    g.moveTo(x, 10); g.lineTo(x, 16); g.moveTo(x, h - 10); g.lineTo(x, h - 16);
+  }
+  for (let y = 35; y < h - 25; y += 25) {
+    g.moveTo(10, y); g.lineTo(16, y); g.moveTo(w - 10, y); g.lineTo(w - 16, y);
+  }
+  g.stroke();
+  for (const [x, y] of [[13,13], [w-13,13], [13,h-13], [w-13,h-13]]) {
+    g.beginPath(); g.moveTo(x, y-5); g.lineTo(x+5,y); g.lineTo(x,y+5); g.lineTo(x-5,y); g.closePath(); g.fillStyle = MAP_INK; g.fill();
+  }
+}
+
+// Rectangle/polygon separation keeps even narrow banners clear of coasts and token overhangs.
+function mapSeaSpace(box, polygons, occupied) {
+  const { x, y, w, h } = box, pad = 12;
+  if (occupied.some(b => x < b.x+b.w+pad && x+w+pad > b.x && y < b.y+b.h+pad && y+h+pad > b.y)) return false;
+  const l = x-pad, r = x+w+pad, t = y-pad, b = y+h+pad;
+  const corners = [{x:l,y:t},{x:r,y:t},{x:r,y:b},{x:l,y:b}];
+  return !polygons.some(poly => {
+    if (poly.some(p => p.x >= l && p.x <= r && p.y >= t && p.y <= b) || corners.some(p => pointInPolygon(p, poly))) return true;
+    return poly.some((a,i) => {
+      const z = poly[(i+1)%poly.length];
+      return [[l,true],[r,true],[t,false],[b,false]].some(([v,vertical]) => {
+        const d = vertical ? z.x-a.x : z.y-a.y;
+        if (!d) return false;
+        const f = (v-(vertical ? a.x : a.y))/d, q = vertical ? a.y+f*(z.y-a.y) : a.x+f*(z.x-a.x);
+        return f >= 0 && f <= 1 && q >= (vertical ? t : l) && q <= (vertical ? b : r);
+      });
+    });
+  });
+}
+
+function paintCompass(g, x, y, s) {
+  g.save(); g.translate(x, y); g.scale(s, s); g.strokeStyle = MAP_INK; g.lineWidth = .8;
+  for (const r of [25, 28]) { g.beginPath(); g.arc(0,0,r,0,Math.PI*2); g.stroke(); }
+  for (let i=0;i<16;i++) {
+    const a=i*Math.PI/8-Math.PI/2, r=i%2 ? 19 : i%4 ? 29 : 38;
+    const tip=[Math.cos(a)*r,Math.sin(a)*r], left=[Math.cos(a-.25)*6,Math.sin(a-.25)*6];
+    g.beginPath(); g.moveTo(0,0); g.lineTo(...left); g.lineTo(...tip); g.closePath(); g.fillStyle=MAP_INK; g.fill(); g.stroke();
+    g.beginPath(); g.moveTo(0,0); g.lineTo(...tip); g.lineTo(Math.cos(a+.25)*6,Math.sin(a+.25)*6); g.closePath(); g.fillStyle='#eee1bc'; g.fill(); g.stroke();
+  }
+  g.textAlign='center'; g.fillStyle=MAP_INK; g.font='12px Georgia'; g.fillText('N',0,-44);
+  g.font='9px Georgia'; g.fillText('W',-46,3); g.fillText('E',46,3); g.fillText('S',0,49);
+  g.beginPath(); g.arc(0,0,3,0,Math.PI*2); g.fill(); g.restore();
+}
+
+function paintShip(g) {
+  g.beginPath(); g.moveTo(-36,12); g.quadraticCurveTo(0,35,34,10); g.lineTo(25,23);
+  g.quadraticCurveTo(-3,39,-27,23); g.closePath(); g.stroke();
+  g.beginPath(); g.moveTo(0,19); g.lineTo(0,-38); g.lineTo(13,-34); g.lineTo(0,-30); g.moveTo(-20,17); g.lineTo(-20,-20); g.stroke();
+  for(const [x,y,w,h] of [[0,-26,27,34],[-20,-15,17,28]]) {
+    g.beginPath(); g.moveTo(x,y); g.quadraticCurveTo(x+w*.6,y+h*.4,x+w,y+h); g.quadraticCurveTo(x+w*.3,y+h*.8,x,y+h); g.quadraticCurveTo(x+7,y+h*.4,x,y); g.stroke();
+    for(let j=1;j<4;j++) { g.beginPath(); g.moveTo(x+j*3,y+j*6); g.lineTo(x+j*3+9,y+j*6+8); g.stroke(); }
+  }
+  for(let i=0;i<3;i++) { g.beginPath(); g.moveTo(-39+i*5,33+i*4); g.quadraticCurveTo(0,29+i*4,38-i*5,33+i*4); g.stroke(); }
+}
+
+function paintCartouche(g, w, h) {
+  g.fillStyle = 'rgba(239,225,187,.68)'; g.beginPath();
+  g.moveTo(-w/2+12,-h/2); g.quadraticCurveTo(0,-h/2+8,w/2-12,-h/2);
+  g.lineTo(w/2,-h/2+9); g.lineTo(w/2-9,h/2-6); g.quadraticCurveTo(0,h/2+2,-w/2+9,h/2-6);
+  g.lineTo(-w/2,-h/2+9); g.closePath(); g.fill(); g.stroke();
+  g.beginPath(); g.moveTo(-w/2+12,-h/2+1); g.lineTo(-w/2+16,-h/2+9); g.lineTo(-w/2+1,-h/2+9);
+  g.moveTo(w/2-12,-h/2+1); g.lineTo(w/2-16,-h/2+9); g.lineTo(w/2-1,-h/2+9); g.stroke();
+  g.textAlign='center'; g.font=`italic ${Math.min(23,w/10)}px Georgia`; g.fillStyle=MAP_INK; g.fillText('Terra Incognita',0,1);
+  g.font='8px Georgia'; g.fillText('NOVA TABULA  ·  ANNO MDCLXV',0,17);
+}
+
+function placeMapEngravings(g, rng, polygons) {
+  const {w,h} = state.view, occupied=[], placements=[];
+  function place(kind, bw, bh, draw) {
+    if(w<330 || h<260) return;
+    const candidates=[{x:w-bw-28,y:28},{x:28,y:h-bh-28},{x:28,y:28},{x:w-bw-28,y:h-bh-28}];
+    for(let i=0;i<220;i++) candidates.push({x:28+rng()*Math.max(0,w-bw-56),y:28+rng()*Math.max(0,h-bh-56)});
+    const box=candidates.map(p=>({...p,w:bw,h:bh})).find(b=>b.x>=22&&b.y>=22&&b.x+b.w<=w-22&&b.y+b.h<=h-22&&mapSeaSpace(b,polygons,occupied));
+    if(!box) return;
+    occupied.push(box); placements.push({kind,...box}); g.save(); g.translate(box.x+bw/2,box.y+bh/2); draw(); g.restore();
+  }
+  g.strokeStyle=MAP_INK; g.fillStyle=MAP_INK; g.lineWidth=.85; g.lineCap='round'; g.lineJoin='round';
+  place('cartouche',218,68,()=>paintCartouche(g,218,68));
+  place('compass',104,112,()=>paintCompass(g,0,0,1));
+  const s=Math.max(.56,Math.min(1,Math.min(w,h)/700));
+  place('ship',88*s,92*s,()=>{g.scale(s,s);paintShip(g)});
+  place('scale',128,31,()=>{
+    g.textAlign='center';g.font='italic 9px Georgia';g.fillText('Leagues of the sea',0,-6);
+    for(let i=0;i<4;i++){g.fillStyle=i%2?MAP_PAPER:MAP_INK;g.fillRect(-56+i*28,1,28,5);g.strokeRect(-56+i*28,1,28,5)}
+    g.font='8px Georgia';g.fillStyle=MAP_INK;g.fillText('0          50          100',0,16);
+  });
+  return placements;
+}
+
+function buildOldMapLayer() {
+  const {w,h,dpr,scale,ox,oy}=state.view, rng=makeRng(state.seed ^ 0x6a09e667);
+  const layer=document.createElement('canvas'); layer.width=canvas.width; layer.height=canvas.height;
+  const g=layer.getContext('2d'); g.setTransform(dpr,0,0,dpr,0,0); paintMapPaper(g,w,h,rng);
+  g.save(); g.translate(ox,oy); g.scale(scale,scale); g.lineJoin='round';
+  // Alternating broad strokes leave four fine engraved contours outside the land union.
+  for(const width of [30,28,22,20,14,12,6,4]) {
+    g.lineWidth=width/scale;g.strokeStyle=width%8===6?'rgba(100,91,62,.3)':MAP_PAPER;
+    paths.forEach(p=>g.stroke(p));
+  }
+  g.restore();
+  const polygons=world.provinces.map(p=>p.outline.map(q=>({x:q.x*scale+ox,y:q.y*scale+oy})));
+  const tokenFootprints=world.provinces.map(p=>{
+    const x=p.site.x*scale+ox,y=p.site.y*scale+oy,rx=tokenRadius*scale*1.9,ry=tokenRadius*scale*1.25;
+    return [{x:x-rx,y:y-ry},{x:x+rx,y:y-ry},{x:x+rx,y:y+ry},{x:x-rx,y:y+ry}];
+  });
+  // Rhumb lines are clipped to sea, so they cannot compete with province details.
+  const sea=new Path2D();sea.rect(0,0,w,h);
+  polygons.forEach(poly=>{poly.forEach((p,i)=>i?sea.lineTo(p.x,p.y):sea.moveTo(p.x,p.y));sea.closePath()});
+  g.save();g.clip(sea,'evenodd');
+  const placements=placeMapEngravings(g,rng,[...polygons,...tokenFootprints]), compass=placements.find(p=>p.kind==='compass');
+  if(compass){
+    g.globalCompositeOperation='multiply';g.strokeStyle='rgba(104,85,49,.09)';g.lineWidth=.6;
+    const x=compass.x+compass.w/2,y=compass.y+compass.h/2;
+    for(let i=0;i<16;i++) {const a=i*Math.PI/8;g.beginPath();g.moveTo(x+Math.cos(a)*58,y+Math.sin(a)*58);g.lineTo(x+Math.cos(a)*Math.hypot(w,h),y+Math.sin(a)*Math.hypot(w,h));g.stroke()}
+  }
+  g.restore();paintMapFrame(g,w,h);
+  oldMapLayer={canvas:layer,placements,key:`${state.seed}:${w}:${h}:${dpr}`};
+  console.info(`[old-map] seed=${state.seed} view=${w}x${h}@${dpr} engravings=${placements.map(p=>p.kind).join(',')}`);
+}
+
+// view maps world units -> CSS pixels (scale + centring offset); dpr maps CSS -> device pixels.
+function applyWorldTransform() {
+  const { scale, ox, oy, dpr } = state.view;
+  ctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * ox, dpr * oy);
+}
+
+function render() {
+  if (!oldMapLayer || !state.view) return;
+  const { w, h, scale, dpr } = state.view;
+  const px = n => n / scale;                       // CSS pixels -> world units for line widths
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  ctx.drawImage(oldMapLayer.canvas, 0, 0, w, h);
+  applyWorldTransform();
+  ctx.lineJoin = 'round';
+  ctx.strokeStyle = '#594a32';                    // engraved coastline
+  ctx.lineWidth = px(2.5);
+  paths.forEach(p => ctx.stroke(p));
+
+  const sel = world.provinces[state.selectedId];
+  const moveSet = new Set(sel ? moveTargets(sel.id) : []), attackSet = new Set(sel ? attackTargets(sel.id) : []);
+  world.provinces.forEach((prov, i) => {
+    ctx.fillStyle = ownerColor(i);                 // province is painted in its owner's colour
+    ctx.fill(paths[i]);
+    ctx.fillStyle = 'rgba(229, 211, 166, .13)';   // light watercolour wash; preserve owner hues
+    ctx.fill(paths[i]);
+    ctx.fillStyle = prov.shade > 0 ? `rgba(255, 255, 255, ${prov.shade * 0.14})` : `rgba(0, 0, 0, ${-prov.shade * 0.14})`;
+    ctx.fill(paths[i]);
+    if (moveSet.has(i) || attackSet.has(i)) {      // possible targets of the selection: hatched
+      ctx.fillStyle = getHatchPattern(attackSet.has(i) ? 'attack' : 'move');
+      ctx.fill(paths[i]);
+    }
+    if (i === state.hoveredId && i !== sel?.id) {
+      ctx.fillStyle = 'rgba(255, 248, 232, .16)';
+      ctx.fill(paths[i]);
+    }
+  });
+  drawTerrain(px);
+
+  ctx.strokeStyle = 'rgba(50, 35, 15, .7)';        // province borders
+  ctx.lineWidth = px(1.3);
+  paths.forEach(p => ctx.stroke(p));
+
+  // State borders: a thick line wherever two provinces of different owners meet.
+  ctx.strokeStyle = 'rgba(25, 15, 5, .9)';
+  ctx.lineWidth = px(3.5);
+  ctx.lineCap = 'round';
+  stateBorderSegments().forEach(seg => {
+    ctx.beginPath();
+    seg.forEach((pt, k) => (k ? ctx.lineTo(pt.x, pt.y) : ctx.moveTo(pt.x, pt.y)));
+    ctx.stroke();
+  });
+
+  [moveSet, attackSet].forEach((targets, kind) => targets.forEach(i => {
+    ctx.save();
+    ctx.clip(paths[i]);                         // keep target rims inside their own province
+    ctx.strokeStyle = '#fff8e8';
+    ctx.lineWidth = px(7);
+    ctx.stroke(paths[i]);
+    ctx.setLineDash([px(6), px(4)]);
+    ctx.strokeStyle = kind ? '#a32828' : '#261d14';
+    ctx.lineWidth = px(5);
+    ctx.stroke(paths[i]);
+    ctx.restore();
+  }));
+  if (world.provinces[state.hoveredId] && state.hoveredId !== sel?.id) {
+    ctx.strokeStyle = 'rgba(255, 248, 232, .85)';
+    ctx.lineWidth = px(1.5);
+    ctx.stroke(paths[state.hoveredId]);
+  }
+  if (sel) {
+    ctx.save();
+    ctx.clip(paths[sel.id]);
+    ctx.strokeStyle = '#fff8e8';
+    ctx.lineWidth = px(12);                     // clipped ivory halo sits inside the solid ink border
+    ctx.stroke(paths[sel.id]);
+    ctx.restore();
+    ctx.strokeStyle = '#261d14';
+    ctx.lineWidth = px(5);
+    ctx.stroke(paths[sel.id]);
+  }
+  const b = state.battle, hov = state.hoveredId;
+  const intent = state.aiIntent;
+  if (b && !b.charging) drawArrow(b.fromId, b.toId, '#c81414');
+  else if (intent) drawArrow(intent.fromId, intent.toId, intent.kind === 'attack' ? '#c81414' : '#fff8dc');
+  else if (sel && attackSet.has(hov)) drawArrow(sel.id, hov, '#c81414');
+  else if (sel && moveSet.has(hov)) drawArrow(sel.id, hov, '#fff8dc');
+  drawEffects('ground');                         // bursts/flashes sit under the tokens so counts stay readable
+  state.capitals.forEach(id => { if (id != null && isCapital(id)) drawCapitalLandmark(world.provinces[id]); });
+  world.provinces.forEach(p => drawSoldierToken(p, p.id === state.selectedId || p.id === b?.fromId || p.id === b?.toId));
+  drawEffects('top');
+}
+
+// Curved path between two province centres, shared by arrows and marching troops.
+function arrowCurve(fromId, toId) {
+  const a = world.provinces[fromId].site, z = world.provinces[toId].site;
+  const dx = z.x - a.x, dy = z.y - a.y, len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
+  const start = { x: a.x + ux * tokenRadius * 1.2, y: a.y + uy * tokenRadius * 1.2 };
+  const end = { x: z.x - ux * tokenRadius * 1.3, y: z.y - uy * tokenRadius * 1.3 };
+  const ctrl = { x: (start.x + end.x) / 2 - uy * len * 0.18, y: (start.y + end.y) / 2 + ux * len * 0.18 };
+  return { start, ctrl, end };
+}
+const curvePoint = (c, t) => ({ x: (1 - t) ** 2 * c.start.x + 2 * (1 - t) * t * c.ctrl.x + t * t * c.end.x,
+                                y: (1 - t) ** 2 * c.start.y + 2 * (1 - t) * t * c.ctrl.y + t * t * c.end.y });
+
+// Curved arrow between two province centres (attack = red, move = parchment). upto < 1 draws only the
+// first part of it (growing arrow); de Casteljau: that part is again a quadratic curve.
+function drawArrow(fromId, toId, color, upto = 1) {
+  const s = state.view.scale, full = arrowCurve(fromId, toId), start = full.start;
+  const ctrl = upto < 1 ? { x: start.x + (full.ctrl.x - start.x) * upto, y: start.y + (full.ctrl.y - start.y) * upto } : full.ctrl;
+  const end = upto < 1 ? curvePoint(full, upto) : full.end;
+  const head = tokenRadius * 0.7, ang = Math.atan2(end.y - ctrl.y, end.x - ctrl.x);
+  const shaftEnd = { x: end.x - Math.cos(ang) * head * 0.8, y: end.y - Math.sin(ang) * head * 0.8 };
+  ctx.save();
+  ctx.lineCap = 'round';
+  [['#1a1208', 9 / s], [color, 5 / s]].forEach(([c, w]) => {
+    ctx.strokeStyle = c; ctx.lineWidth = w;
+    ctx.beginPath(); ctx.moveTo(start.x, start.y); ctx.quadraticCurveTo(ctrl.x, ctrl.y, shaftEnd.x, shaftEnd.y); ctx.stroke();
+  });
+  ctx.beginPath();
+  ctx.moveTo(end.x, end.y);
+  ctx.lineTo(end.x - Math.cos(ang - 0.45) * head, end.y - Math.sin(ang - 0.45) * head);
+  ctx.lineTo(end.x - Math.cos(ang + 0.45) * head, end.y - Math.sin(ang + 0.45) * head);
+  ctx.closePath();
+  ctx.fillStyle = color; ctx.fill();
+  ctx.lineWidth = 2 / s; ctx.strokeStyle = '#1a1208'; ctx.stroke();
+  ctx.restore();
+}
+
+// ---------- Board animations ----------
+// Short canvas effects so every action is easy to follow: pulse + "+n" for reinforcements, troops
+// marching along the move arrow, a charge arrow + clash before a battle, "-n" for losses, a flash in
+// the new owner's colour on conquest. render() draws 'ground' effects under the tokens and 'top' effects
+// (floating texts, marching troops) above them.
+// fx.hold[id] offsets the displayed soldier count (display only) while troops are still on their way.
+// fx.lock > 0 blocks board input until an animation that ends the turn has finished.
+const fx = { list: [], speed: 1, raf: 0, gen: 0, hold: {}, lock: 0, lockLabel: '' };   // speed 0 = instant (tests)
+const easeOut = t => 1 - (1 - t) ** 3;
+const easeInOut = t => (t < 0.5 ? 2 * t * t : 1 - (-2 * t + 2) ** 2 / 2);
+const playerHex = player => (player === ROGUE ? ROGUE_HEX : colorHex(settings.players[player].color));
+const holdSoldiers = (id, n) => { fx.hold[id] = (fx.hold[id] || 0) + n; };
+const GAIN_COLOR = '#b8f08a', LOSS_COLOR = '#ff6b5b';
+
+// Adds an effect; resolves when it has finished (immediately when fx.speed is 0). onEnd runs first.
+function addEffect({ duration, delay = 0, draw, onEnd, layer = 'top' }) {
+  let resolve;
+  const promise = new Promise(r => { resolve = r; });
+  if (!fx.speed) { onEnd?.(); resolve(); return promise; }
+  fx.list.push({ start: performance.now() + delay * fx.speed, duration: duration * fx.speed, draw, onEnd, layer, resolve, promise });
+  if (!fx.raf) fx.raf = requestAnimationFrame(fxTick);
+  return promise;
+}
+function fxTick() {
+  fx.raf = 0;
+  const now = performance.now();
+  const done = fx.list.filter(e => now >= e.start + e.duration);
+  fx.list = fx.list.filter(e => !done.includes(e));
+  done.forEach(e => { e.onEnd?.(); e.resolve(); });
+  render();
+  if (fx.list.length && !fx.raf) fx.raf = requestAnimationFrame(fxTick);
+}
+function drawEffects(layer) {
+  const now = performance.now();
+  fx.list.forEach(e => {
+    if (now < e.start || e.layer !== layer) return;
+    ctx.save();
+    e.draw(Math.min(1, (now - e.start) / e.duration));
+    ctx.restore();
+  });
+}
+const fxIdle = () => Promise.all(fx.list.map(e => e.promise));
+// New game: drop running effects. Their promises resolve; awaiting code sees fx.gen changed and stops.
+function fxReset() {
+  const list = fx.list;
+  Object.assign(fx, { list: [], gen: fx.gen + 1, hold: {}, lock: 0 });
+  list.forEach(e => e.resolve());
+}
+// Runs fn once `promise` settles, blocking board input meanwhile; skipped if a new game started.
+async function afterEffects(promise, label, fn) {
+  const gen = fx.gen;
+  fx.lock++;
+  fx.lockLabel = label;
+  updateTurnUI();
+  await promise;
+  if (gen !== fx.gen) return;
+  fx.lock--;
+  fn();
+}
+
+function fxPulse(id, color, delay = 0) {
+  const { x, y } = world.provinces[id].site, r = tokenRadius;
+  return addEffect({ duration: 700, delay, layer: 'ground', draw: t => {
+    const s = state.view.scale;
+    ctx.globalAlpha = 1 - t;
+    ctx.beginPath();
+    ctx.arc(x, y, r * (1.3 + 2.4 * easeOut(t)), 0, Math.PI * 2);
+    ctx.lineWidth = 8 / s; ctx.strokeStyle = 'rgba(26, 18, 8, .55)'; ctx.stroke();
+    ctx.lineWidth = 4 / s; ctx.strokeStyle = color; ctx.stroke();
+  } });
+}
+
+function fxFloatText(id, text, color, delay = 0) {
+  const { x, y } = world.provinces[id].site, r = tokenRadius;
+  return addEffect({ duration: 1200, delay, draw: t => {
+    const s = state.view.scale, pop = Math.min(1, 0.5 + t * 5), ty = y - r * 1.9 - r * 1.5 * easeOut(t);   // starts above the pill
+    ctx.globalAlpha = t < 0.7 ? 1 : (1 - t) / 0.3;
+    ctx.font = `bold ${r * 1.5 * pop}px Georgia, serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.lineJoin = 'round';
+    ctx.lineWidth = 4 / s; ctx.strokeStyle = '#1a1208'; ctx.strokeText(text, x, ty);
+    ctx.fillStyle = color; ctx.fillText(text, x, ty);
+  } });
+}
+
+function fxFlash(id, color, delay = 0) {
+  return addEffect({ duration: 800, delay, layer: 'ground', draw: t => {
+    ctx.globalAlpha = 0.75 * (1 - t);
+    ctx.fillStyle = color; ctx.fill(paths[id]);
+    ctx.lineWidth = 4 / state.view.scale; ctx.strokeStyle = '#fff8dc'; ctx.stroke(paths[id]);
+  } });
+}
+
+// Small round token (uniform + count badge) used for troops on the march.
+function drawMarchToken(x, y, count, owner) {
+  const r = tokenRadius * 0.95, hex = playerHex(owner), k = state.view.scale * state.view.dpr;
+  ctx.shadowColor = 'rgba(0, 0, 0, .5)';
+  ctx.shadowBlur = r * 0.5 * k;
+  ctx.shadowOffsetY = r * 0.3 * k;
+  ctx.beginPath(); ctx.arc(x, y, r, 0, Math.PI * 2);
+  ctx.fillStyle = '#f3e6c8'; ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.save(); ctx.clip();
+  ctx.drawImage(soldierIcon(uniformFor(owner)), x - r * 1.05, y - r * 0.95, 2.1 * r, 2.1 * r);
+  ctx.restore();
+  ctx.lineWidth = r * 0.22; ctx.strokeStyle = hex; ctx.stroke();
+  ctx.lineWidth = r * 0.07; ctx.strokeStyle = '#1a1208'; ctx.stroke();
+  const bx = x + r * 0.85, by = y - r * 0.8, br = r * 0.58;
+  ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2);
+  ctx.fillStyle = hex; ctx.fill(); ctx.stroke();
+  ctx.fillStyle = hexLuminance(hex) > 0.5 ? '#1a1208' : '#fff8e8';
+  ctx.font = `bold ${br * (count > 99 ? 0.9 : 1.25)}px Georgia, serif`;
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillText(String(count), bx, by + br * 0.06);
+}
+
+// Troops walk along the move arrow, leaving a dotted trail; onArrive runs when they reach the target.
+function fxMarch(fromId, toId, count, owner, onArrive) {
+  const curve = { ...arrowCurve(fromId, toId), start: world.provinces[fromId].site, end: world.provinces[toId].site };
+  const r = tokenRadius;
+  return addEffect({ duration: 1000, draw: t => {
+    const e = easeInOut(t), s = state.view.scale;
+    ctx.setLineDash([r * 0.25, r * 0.35]);
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 3 / s;
+    ctx.strokeStyle = 'rgba(26, 18, 8, .6)';
+    ctx.beginPath();
+    for (let k = 0; k <= 24; k++) { const p = curvePoint(curve, (e * k) / 24); k ? ctx.lineTo(p.x, p.y) : ctx.moveTo(p.x, p.y); }
+    ctx.stroke();
+    ctx.setLineDash([]);
+    const p = curvePoint(curve, e), bob = Math.abs(Math.sin(t * Math.PI * 7)) * r * 0.25 * (1 - e * e);
+    drawMarchToken(p.x, p.y - bob, count, owner);
+  }, onEnd: () => { onArrive?.(); fxPulse(toId, playerHex(owner)); } });
+}
+
+// A move that already happened in the state: the target's count rises only when the troops arrive.
+function marchTroops(fromId, toId, count, owner = state.currentPlayer) {
+  holdSoldiers(toId, -count);
+  return fxMarch(fromId, toId, count, owner, () => holdSoldiers(toId, count));
+}
+
+// Attack: the red arrow shoots towards the target, then a clash burst behind the defenders' token.
+function fxCharge(fromId, toId) {
+  const { x, y } = world.provinces[toId].site, r = tokenRadius;
+  const arrow = addEffect({ duration: 550, layer: 'ground', draw: t => drawArrow(fromId, toId, '#c81414', Math.max(0.05, easeOut(t))) });
+  const clash = addEffect({ duration: 600, delay: 450, layer: 'ground', draw: t => {   // under the token: spikes ring it
+    const s = state.view.scale, n = 12, R = r * (0.9 + 1.8 * easeOut(t)), spin = t * 0.6;
+    ctx.globalAlpha = 1 - t * t;
+    ctx.beginPath();
+    for (let i = 0; i < 2 * n; i++) {
+      const ang = (i * Math.PI) / n + spin, rad = i % 2 ? R * 0.45 : R;
+      ctx.lineTo(x + Math.cos(ang) * rad, y + Math.sin(ang) * rad);
+    }
+    ctx.closePath();
+    ctx.fillStyle = '#ffd23a'; ctx.fill();
+    ctx.lineWidth = 3 / s; ctx.strokeStyle = '#c81414'; ctx.stroke();
+    ctx.fillStyle = '#1a1208';
+    ctx.font = `bold ${r * 1.4}px Georgia, serif`;
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText('\u2694', x, y + r * 1.75);       // below the pill, so it is not hidden by the token
+  } });
+  return Promise.all([arrow, clash]);
+}
+
+// ---------- Soldier icons (one uniform per state / player index) ----------
+// All uniforms share one template (same bust, pose, rifle, outline) so icons look like one set;
+// only colours, insignia and headgear differ.
+const UNIFORMS = [
+  { id: 'ru1914', country: 'Russia', label: 'Russian Imperial Army, 1914', landmark: "St Basil's Cathedral", headgear: 'furazhka',
+    tunic: '#a39a6a', collar: '#a39a6a', collarPiping: null, shoulder: '#b52a2a', shoulderPiping: '#1a1208',
+    strap: '#7b5230', buttons: [[45, 73], [45, 80]], buttonColor: '#c9b37a', placket: true,
+    cap: '#9a9060', capBand: '#857c50', hair: '#6a4a2a', bayonetWidth: 1.6 },
+  { id: 'de1914', country: 'Germany', label: 'Imperial German Army, 1914', landmark: 'Brandenburg Gate', headgear: 'pickelhaube',
+    tunic: '#76806a', collar: '#4b5440', collarPiping: '#b22a2a', shoulder: '#6b745e', shoulderPiping: '#b22a2a',
+    strap: '#2e2418', buttons: [[50, 75], [50, 85], [50, 95]], buttonColor: '#d4a63a', placket: false,
+    hair: '#4a3420', bayonetWidth: 2.8 },
+  { id: 'it1915', country: 'Italy', label: 'Royal Italian Army (Alpini), 1915', landmark: 'Colosseum', headgear: 'alpine',
+    tunic: '#7f8466', collar: '#7f8466', collarPiping: '#2f8a3a', shoulder: '#7f8466', shoulderPiping: '#4f533e',
+    strap: '#5b4128', buttons: [[50, 74], [50, 84], [50, 94]], buttonColor: '#8d8f78', placket: false,
+    cap: '#5d5f48', hair: '#2a1d12', bayonetWidth: 2.2 },
+  { id: 'fr1914', country: 'France', label: 'French Army, 1914', landmark: 'Eiffel Tower', headgear: 'kepi',
+    tunic: '#56698f', collar: '#56698f', collarPiping: '#c0262c', shoulder: '#56698f', shoulderPiping: '#38476a',
+    strap: '#6e4a28', buttons: [[42, 74], [58, 74], [42, 86], [58, 86]], buttonColor: '#d1ad48', placket: false,
+    cap: '#c0262c', capBand: '#2c3a66', hair: '#3a2716', bayonetWidth: 1.4 },
+  { id: 'at1914', country: 'Austria-Hungary', label: 'Austro-Hungarian Army, 1914', landmark: "St Stephen's Cathedral", headgear: 'feldkappe',
+    tunic: '#8c99a3', collar: '#8c99a3', collarPiping: '#b52a2a', shoulder: '#8c99a3', shoulderPiping: '#5f6b74',
+    strap: '#3a2c1c', buttons: [[50, 76], [50, 86], [50, 96]], buttonColor: '#c9b37a', placket: true,
+    cap: '#8c99a3', capBand: '#7a8790', hair: '#5a3a1e', bayonetWidth: 2.4 },
+  { id: 'gb1914', country: 'Britain', label: 'British Army, 1914', landmark: 'Big Ben', headgear: 'servicecap',
+    tunic: '#8a7a4c', collar: '#8a7a4c', collarPiping: null, shoulder: '#8a7a4c', shoulderPiping: '#5e5232',
+    strap: '#9a8a5c', buttons: [[50, 74], [50, 84], [50, 94]], buttonColor: '#c9a640', placket: true,
+    cap: '#857547', capBand: '#6e6038', hair: '#7a4a24', bayonetWidth: 2.0 },
+  { id: 'tr1915', country: 'Ottoman Empire', label: 'Ottoman Army, 1915', landmark: 'Hagia Sophia', headgear: 'kabalak',
+    tunic: '#9a8656', collar: '#9a8656', collarPiping: '#b52a2a', shoulder: '#9a8656', shoulderPiping: '#6a5a36',
+    strap: '#5b4128', buttons: [[50, 75], [50, 85], [50, 95]], buttonColor: '#b39a5c', placket: false,
+    cap: '#a8925e', capBand: '#7f6c42', hair: '#1e140c', bayonetWidth: 2.0 },
+  { id: 'gr1912', country: 'Greece', label: 'Hellenic Army (Evzones), 1912', landmark: 'Parthenon', headgear: 'fareon',
+    tunic: '#857c4f', collar: '#857c4f', collarPiping: null, shoulder: '#857c4f', shoulderPiping: '#5a5434',
+    strap: '#5b4128', buttons: [[50, 74], [50, 84], [50, 94]], buttonColor: '#c9b37a', placket: true,
+    cap: '#8f8456', capBand: '#6e6640', hair: '#1e140c', bayonetWidth: 2.0 },
+  { id: 'rs1914', country: 'Serbia', label: 'Royal Serbian Army, 1914', landmark: 'Belgrade Fortress', headgear: 'sajkaca',
+    tunic: '#6f735a', collar: '#6f735a', collarPiping: '#b52a2a', shoulder: '#6f735a', shoulderPiping: '#4c4f3c',
+    strap: '#4a3420', buttons: [[50, 74], [50, 82], [50, 90], [50, 98]], buttonColor: '#b0a070', placket: false,
+    cap: '#6a6e54', capBand: '#555940', hair: '#3a2716', bayonetWidth: 2.2 },
+  { id: 'bg1915', country: 'Bulgaria', label: 'Bulgarian Army, 1915', landmark: 'Alexander Nevsky Cathedral', headgear: 'furazhka',
+    tunic: '#6b6a52', collar: '#6b6a52', collarPiping: '#b52a2a', shoulder: '#6b6a52', shoulderPiping: '#b52a2a',
+    strap: '#5b4128', buttons: [[50, 75], [50, 85], [50, 95]], buttonColor: '#c9b37a', placket: false,
+    cap: '#5c5b46', capBand: '#4a4936', cockade: ['#f4f0e0', '#2f8a3a', '#c0262c'], hair: '#2a1d12', bayonetWidth: 2.6 },
+];
+// state.uniforms[player] = UNIFORMS index, all different. Each player picks a nation in the settings
+// (settings.players[i].country) or RANDOM_COUNTRY to be dealt one of the nations nobody picked.
+const uniformFor = player => UNIFORMS[state.uniforms?.[player] ?? player % UNIFORMS.length];
+// Rogue provinces keep the uniform of the state they deserted.
+const uniformAt = id => { const ps = state.provinceStates[id]; return uniformFor(ps.owner === ROGUE ? ps.formerOwner : ps.owner); };
+const RANDOM_COUNTRY = 'random';
+// `current` (the running game's dealing) is kept for random seats whose nation is still free.
+function dealUniforms(count, rng = Math.random, current = []) {
+  const fixed = settings.players.slice(0, count).map(p => (p.country === RANDOM_COUNTRY ? -1 : UNIFORMS.findIndex(u => u.id === p.country)));
+  const taken = new Set(fixed.filter(i => i >= 0));
+  const free = UNIFORMS.map((_, i) => i);
+  for (let i = free.length - 1; i > 0; i--) { const j = Math.floor(rng() * (i + 1)); [free[i], free[j]] = [free[j], free[i]]; }
+  const result = fixed.map((u, i) => (u < 0 && current[i] != null && !taken.has(current[i]) ? current[i] : u));
+  result.forEach(u => taken.add(u));
+  return result.map(u => {
+    if (u >= 0) return u;
+    const pick = free.find(k => !taken.has(k));
+    taken.add(pick);
+    return pick;
+  });
+}
+
+// Paints a soldier bust into a 100x104 unit box on context g.
+function paintSoldier(g, u) {
+  const OUT = '#1a1208', SKIN = '#e8b98f';
+  g.lineJoin = 'round';
+  g.lineCap = 'round';
+  const outline = (w = 2.4) => { g.lineWidth = w; g.strokeStyle = OUT; g.stroke(); };
+  const line = (x1, y1, x2, y2, width, color) => {
+    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2);
+    g.lineWidth = width + 2.4; g.strokeStyle = OUT; g.stroke();
+    g.lineWidth = width; g.strokeStyle = color; g.stroke();
+  };
+  const ellipse = (x, y, rx, ry, fill, w = 2) => {
+    g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); g.fillStyle = fill; g.fill(); if (w) outline(w);
+  };
+
+  // Rifle slung behind the right shoulder (wood stock, steel barrel, bayonet).
+  line(70, 104, 79, 44, 4.5, '#7a4a22');
+  line(79, 44, 84, 12, 2.8, '#4a4a4a');
+  line(84, 12, 86, 1, u.bayonetWidth, '#d8d8d8');
+
+  // Torso.
+  g.beginPath();
+  g.moveTo(4, 104); g.bezierCurveTo(6, 80, 18, 70, 38, 66); g.lineTo(62, 66);
+  g.bezierCurveTo(82, 70, 94, 80, 96, 104); g.closePath();
+  g.fillStyle = u.tunic; g.fill();
+  g.save();
+  g.clip();
+  g.fillStyle = 'rgba(0, 0, 0, .18)'; g.fillRect(56, 60, 50, 50);      // shaded right half
+  line(22, 72, 72, 106, 3.2, u.strap);                                   // cross strap
+  if (u.placket) { g.beginPath(); g.moveTo(45, 66); g.lineTo(45, 86); g.lineWidth = 1.2; g.strokeStyle = 'rgba(0,0,0,.45)'; g.stroke(); }
+  u.buttons.forEach(([bx, by]) => ellipse(bx, by, 2.1, 2.1, u.buttonColor, 1));
+  g.restore();
+  g.beginPath();
+  g.moveTo(4, 104); g.bezierCurveTo(6, 80, 18, 70, 38, 66); g.lineTo(62, 66); g.bezierCurveTo(82, 70, 94, 80, 96, 104);
+  outline();
+
+  // Shoulder boards.
+  [[14, 77, 33, 69], [67, 69, 86, 77]].forEach(([x1, y1, x2, y2]) => {
+    g.beginPath(); g.moveTo(x1, y1); g.lineTo(x2, y2);
+    g.lineWidth = 8.6; g.strokeStyle = u.shoulderPiping; g.stroke();
+    g.lineWidth = 5.6; g.strokeStyle = u.shoulder; g.stroke();
+  });
+
+  // Neck and stand-up collar.
+  g.beginPath(); g.rect(43, 52, 14, 15); g.fillStyle = SKIN; g.fill(); outline(2);
+  g.beginPath(); g.moveTo(37, 67); g.lineTo(40, 59); g.lineTo(60, 59); g.lineTo(63, 67); g.closePath();
+  g.fillStyle = u.collar; g.fill(); outline(2);
+  if (u.collarPiping) { g.beginPath(); g.moveTo(40.5, 60.5); g.lineTo(59.5, 60.5); g.lineWidth = 1.6; g.strokeStyle = u.collarPiping; g.stroke(); }
+
+  // Head: ears, face, eyes, nose, moustache.
+  ellipse(37.8, 44, 2.6, 4, SKIN, 1.6);
+  ellipse(62.2, 44, 2.6, 4, SKIN, 1.6);
+  ellipse(50, 42, 12.5, 15, SKIN, 2.4);
+  ellipse(45.5, 42, 1.4, 1.6, OUT, 0);
+  ellipse(54.5, 42, 1.4, 1.6, OUT, 0);
+  g.beginPath(); g.moveTo(50, 43); g.lineTo(48.6, 48); g.lineTo(50.6, 48.3); g.lineWidth = 1.1; g.strokeStyle = OUT; g.stroke();
+  g.beginPath(); g.moveTo(41.5, 52.5); g.bezierCurveTo(44, 48, 48, 48.5, 50, 50); g.bezierCurveTo(52, 48.5, 56, 48, 58.5, 52.5);
+  g.bezierCurveTo(55, 51, 52, 52, 50, 52); g.bezierCurveTo(48, 52, 45, 51, 41.5, 52.5);
+  g.fillStyle = u.hair; g.fill(); outline(0.8);
+
+  // Headgear.
+  if (u.headgear === 'furazhka') {             // Russian peaked field cap with cockade
+    g.beginPath(); g.moveTo(37.5, 23); g.lineTo(37.5, 31.5); g.quadraticCurveTo(50, 34.5, 62.5, 31.5); g.lineTo(62.5, 23); g.closePath();
+    g.fillStyle = u.capBand; g.fill(); outline(2);
+    ellipse(50, 22.5, 21, 7, u.cap, 2.2);
+    g.beginPath(); g.moveTo(36, 30.5); g.quadraticCurveTo(50, 41, 64, 30.5); g.quadraticCurveTo(50, 35, 36, 30.5);
+    g.fillStyle = '#1c1c1c'; g.fill(); outline(1.4);
+    const rings = u.cockade || ['#e07b1a', '#111'];                           // outer to inner
+    rings.forEach((c, k) => { const f = 1 - k / rings.length; ellipse(50, 27.5, 2.7 * f, 3.3 * f, c, k ? 0 : 1); });
+  } else if (u.headgear === 'pickelhaube') {   // German spiked leather helmet with brass eagle plate
+    g.beginPath(); g.moveTo(35, 32); g.bezierCurveTo(35, 11, 65, 11, 65, 32); g.closePath();
+    g.fillStyle = '#1e1e1e'; g.fill(); outline(2.2);
+    g.beginPath(); g.moveTo(40, 27); g.quadraticCurveTo(41, 19, 47, 16.5); g.lineWidth = 1.6; g.strokeStyle = 'rgba(255,255,255,.35)'; g.stroke();
+    g.beginPath(); g.moveTo(34, 31); g.quadraticCurveTo(50, 39, 62, 31); g.quadraticCurveTo(50, 34, 34, 31);
+    g.fillStyle = '#111'; g.fill(); outline(1.4);
+    g.beginPath(); g.moveTo(50, 18.5); g.lineTo(56, 21.5); g.lineTo(55, 28.5); g.lineTo(50, 31.5); g.lineTo(45, 28.5); g.lineTo(44, 21.5); g.closePath();
+    g.fillStyle = '#d4a63a'; g.fill(); outline(1);
+    g.beginPath(); g.moveTo(47.4, 16.5); g.lineTo(50, 2.5); g.lineTo(52.6, 16.5); g.closePath();
+    g.fillStyle = '#d4a63a'; g.fill(); outline(1.2);
+    ellipse(50, 16.5, 4.4, 2.4, '#d4a63a', 1.2);
+  } else if (u.headgear === 'kepi') {          // French kepi: red crown, blue band, black visor
+    g.beginPath(); g.moveTo(39, 13); g.lineTo(37.5, 31.5); g.quadraticCurveTo(50, 34.5, 62.5, 31.5); g.lineTo(61, 13); g.closePath();
+    g.fillStyle = u.cap; g.fill(); outline(2);
+    g.beginPath(); g.moveTo(38.3, 22.5); g.lineTo(37.5, 31.5); g.quadraticCurveTo(50, 34.5, 62.5, 31.5); g.lineTo(61.7, 22.5);
+    g.quadraticCurveTo(50, 25, 38.3, 22.5); g.fillStyle = u.capBand; g.fill(); outline(1.6);
+    ellipse(50, 13, 11, 3.2, u.cap, 2);
+    g.beginPath(); g.moveTo(44, 15); g.lineTo(44, 22); g.moveTo(56, 15); g.lineTo(56, 22);
+    g.lineWidth = 1; g.strokeStyle = '#d1ad48'; g.stroke();                // gold piping on the crown
+    g.beginPath(); g.moveTo(36, 30.5); g.quadraticCurveTo(50, 40, 64, 30.5); g.quadraticCurveTo(50, 35, 36, 30.5);
+    g.fillStyle = '#151515'; g.fill(); outline(1.4);
+    ellipse(50, 27, 1.6, 1.6, '#d1ad48', 0.8);
+  } else if (u.headgear === 'alpine') {        // Italian Alpini felt hat with black eagle feather
+    g.beginPath(); g.moveTo(25, 29); g.quadraticCurveTo(50, 37, 75, 27); g.quadraticCurveTo(50, 31, 25, 29);
+    g.fillStyle = u.cap; g.fill(); outline(1.8);                             // wide brim
+    g.beginPath(); g.moveTo(37, 30); g.bezierCurveTo(36, 12, 64, 10, 63, 29); g.quadraticCurveTo(50, 32, 37, 30);
+    g.fillStyle = u.cap; g.fill(); outline(2.2);
+    g.beginPath(); g.moveTo(43, 14.5); g.quadraticCurveTo(50, 19, 57, 14); g.lineWidth = 1.2; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke();
+    g.beginPath(); g.moveTo(37.3, 26); g.quadraticCurveTo(50, 29.5, 62.8, 25.5); g.lineWidth = 3; g.strokeStyle = '#3b3d2c'; g.stroke();
+    g.beginPath(); g.moveTo(39, 24); g.bezierCurveTo(30, 16, 26, 6, 30, -2); g.bezierCurveTo(31, 8, 35, 16, 41, 22); g.closePath();
+    g.fillStyle = '#141414'; g.fill(); outline(0.8);                         // feather
+    ellipse(40, 24, 2.2, 2.2, '#c0262c', 0.8);                               // pompon
+  } else if (u.headgear === 'feldkappe') {     // Austro-Hungarian soft field cap: side flaps, two buttons, rosette
+    g.beginPath(); g.moveTo(37, 31); g.lineTo(38.5, 16); g.quadraticCurveTo(50, 11, 61.5, 16); g.lineTo(63, 31);
+    g.quadraticCurveTo(50, 33.5, 37, 31); g.fillStyle = u.cap; g.fill(); outline(2.2);
+    g.beginPath(); g.moveTo(37.6, 24.5); g.quadraticCurveTo(50, 27.5, 62.4, 24.5); g.lineTo(63, 31); g.quadraticCurveTo(50, 33.5, 37, 31); g.closePath();
+    g.fillStyle = u.capBand; g.fill(); outline(1.4);                         // folded-up flaps
+    ellipse(46.5, 27.5, 1.3, 1.3, '#c9b37a', 0.7);
+    ellipse(53.5, 27.5, 1.3, 1.3, '#c9b37a', 0.7);
+    ellipse(50, 19.5, 3.2, 3.2, '#e0b020', 1);                               // imperial rosette
+    ellipse(50, 19.5, 1.4, 1.4, '#151515', 0);
+    g.beginPath(); g.moveTo(36.5, 30.5); g.quadraticCurveTo(50, 38, 63.5, 30.5); g.quadraticCurveTo(50, 34, 36.5, 30.5);
+    g.fillStyle = '#2a2a2a'; g.fill(); outline(1.2);
+  } else if (u.headgear === 'servicecap') {    // British stiff service cap with brass badge
+    g.beginPath(); g.moveTo(38, 22); g.lineTo(37.5, 31.5); g.quadraticCurveTo(50, 34.5, 62.5, 31.5); g.lineTo(62, 22); g.closePath();
+    g.fillStyle = u.capBand; g.fill(); outline(2);
+    g.beginPath(); g.moveTo(26, 21); g.quadraticCurveTo(50, 9, 74, 21); g.quadraticCurveTo(50, 27, 26, 21);
+    g.fillStyle = u.cap; g.fill(); outline(2.2);                             // wide flat crown
+    g.beginPath(); g.moveTo(36, 30.5); g.quadraticCurveTo(50, 40, 64, 30.5); g.quadraticCurveTo(50, 35, 36, 30.5);
+    g.fillStyle = '#4a3420'; g.fill(); outline(1.4);                         // brown leather peak
+    g.beginPath(); g.moveTo(50, 22); g.lineTo(53.5, 25.5); g.lineTo(50, 30); g.lineTo(46.5, 25.5); g.closePath();
+    g.fillStyle = '#c9a640'; g.fill(); outline(0.9);
+  } else if (u.headgear === 'kabalak') {       // Ottoman kabalak: cloth wound round a frame, no peak
+    g.beginPath(); g.moveTo(36.5, 32); g.bezierCurveTo(33, 10, 67, 10, 63.5, 32); g.quadraticCurveTo(50, 35, 36.5, 32);
+    g.fillStyle = u.cap; g.fill(); outline(2.2);
+    g.save(); g.clip();
+    g.lineWidth = 1.6; g.strokeStyle = u.capBand;
+    for (let k = -3; k <= 3; k++) {                                          // criss-cross wrapping
+      g.beginPath(); g.moveTo(50 + k * 7 - 10, 34); g.lineTo(50 + k * 7 + 10, 12); g.stroke();
+      g.beginPath(); g.moveTo(50 + k * 7 + 10, 34); g.lineTo(50 + k * 7 - 10, 12); g.stroke();
+    }
+    g.restore();
+    g.beginPath(); g.moveTo(36.5, 32); g.bezierCurveTo(33, 10, 67, 10, 63.5, 32); g.quadraticCurveTo(50, 35, 36.5, 32); outline(2.2);
+    g.beginPath(); g.moveTo(36.8, 29); g.quadraticCurveTo(50, 32.5, 63.2, 29); g.lineWidth = 3.2; g.strokeStyle = u.capBand; g.stroke();
+  } else if (u.headgear === 'sajkaca') {       // Serbian šajkača: boat-shaped crown dipping in the middle, no peak
+    g.beginPath(); g.moveTo(37, 31); g.lineTo(37.5, 20); g.quadraticCurveTo(40, 11, 45, 12.5); g.quadraticCurveTo(50, 19, 55, 12.5);
+    g.quadraticCurveTo(60, 11, 62.5, 20); g.lineTo(63, 31); g.quadraticCurveTo(50, 33.5, 37, 31);
+    g.fillStyle = u.cap; g.fill(); outline(2.2);
+    g.beginPath(); g.moveTo(50, 18); g.lineTo(50, 22.5); g.lineWidth = 1.2; g.strokeStyle = 'rgba(0,0,0,.4)'; g.stroke();
+    g.beginPath(); g.moveTo(37.4, 26.5); g.quadraticCurveTo(50, 29.5, 62.6, 26.5); g.lineWidth = 1.6; g.strokeStyle = u.capBand; g.stroke();
+    ellipse(50, 25, 2.8, 3.3, '#c0262c', 1);                                 // red-blue-white cockade
+    ellipse(50, 25, 1.9, 2.2, '#23387a', 0);
+    ellipse(50, 25, 0.9, 1.1, '#f4f0e0', 0);
+  } else if (u.headgear === 'fareon') {        // Greek evzone fareon: soft cap flopping to the side, long black tassel
+    g.beginPath(); g.moveTo(37, 31); g.bezierCurveTo(35, 16, 48, 9, 58, 12); g.bezierCurveTo(66, 14, 72, 20, 74, 27);
+    g.quadraticCurveTo(69, 30, 63, 27.5); g.lineTo(63, 31); g.quadraticCurveTo(50, 33.5, 37, 31);
+    g.fillStyle = u.cap; g.fill(); outline(2.2);
+    g.beginPath(); g.moveTo(52, 14); g.quadraticCurveTo(58, 22, 63, 27.5); g.lineWidth = 1.2; g.strokeStyle = 'rgba(0,0,0,.35)'; g.stroke();
+    g.beginPath(); g.moveTo(37.4, 27.5); g.quadraticCurveTo(50, 30.5, 63, 28); g.lineWidth = 2; g.strokeStyle = u.capBand; g.stroke();
+    g.beginPath(); g.moveTo(73, 27); g.bezierCurveTo(78, 32, 75, 38, 78, 43); g.lineWidth = 1.8; g.strokeStyle = '#151515'; g.stroke();
+    g.beginPath(); g.moveTo(78, 42); g.lineTo(72.5, 60); g.lineTo(84, 59); g.closePath();
+    g.fillStyle = '#151515'; g.fill(); outline(0.8);                          // tassel
+    ellipse(45, 25.5, 2.6, 2.6, '#1f5fae', 1);                               // blue-white cockade
+    ellipse(45, 25.5, 1.1, 1.1, '#f4f0e0', 0);
+  }
+}
+
+const soldierIconCache = new Map();
+// ---------- Capital landmarks (one famous building per uniform's nation) ----------
+// Engraved-ink style like the old map: stone fill, dark outline, a few accent colours. Each painter
+// draws into a 100x100 box standing on y=96 and returns the y of its tip (the flagpole stands there).
+const INK = '#3b2a1a', STONE = '#eadcb6', STONE_SHADE = '#cdb98a', OPENING = '#4a3826';
+function inkShape(g, fill, build) {
+  g.beginPath(); build(); g.fillStyle = fill; g.fill(); g.stroke();
+}
+function onionDome(g, cx, baseY, w, h, fill) {
+  inkShape(g, fill, () => {
+    g.moveTo(cx - w / 2, baseY);
+    g.bezierCurveTo(cx - w * 0.8, baseY - h * 0.45, cx - w * 0.1, baseY - h * 0.7, cx, baseY - h);
+    g.bezierCurveTo(cx + w * 0.1, baseY - h * 0.7, cx + w * 0.8, baseY - h * 0.45, cx + w / 2, baseY);
+    g.closePath();
+  });
+}
+function archRow(g, x0, x1, y, w, h, step) {      // dark arched openings
+  g.fillStyle = OPENING;
+  for (let x = x0; x + w <= x1 + 0.01; x += step) {
+    g.beginPath();
+    g.moveTo(x, y + h); g.lineTo(x, y + w / 2); g.arc(x + w / 2, y + w / 2, w / 2, Math.PI, 0); g.lineTo(x + w, y + h);
+    g.closePath(); g.fill();
+  }
+}
+const LANDMARK_PAINTERS = {
+  fr1914(g) {                                       // Eiffel Tower
+    inkShape(g, '#8a6a46', () => {
+      g.moveTo(18, 96); g.quadraticCurveTo(38, 62, 45, 16); g.lineTo(55, 16); g.quadraticCurveTo(62, 62, 82, 96);
+      g.lineTo(68, 96); g.quadraticCurveTo(50, 66, 32, 96); g.closePath();
+    });
+    g.beginPath();                                  // lattice
+    [[30, 82, 44, 62], [70, 82, 56, 62], [34, 66, 52, 44], [66, 66, 48, 44], [44, 40, 54, 24], [56, 40, 46, 24]]
+      .forEach(([a, b, c, d]) => { g.moveTo(a, b); g.lineTo(c, d); });
+    g.lineWidth = 1.2; g.stroke(); g.lineWidth = 2.4;
+    inkShape(g, STONE_SHADE, () => g.rect(28, 64, 44, 5));
+    inkShape(g, STONE_SHADE, () => g.rect(39, 40, 22, 4));
+    inkShape(g, STONE_SHADE, () => g.rect(44, 14, 12, 4));
+    g.beginPath(); g.moveTo(50, 14); g.lineTo(50, 4); g.stroke();
+    return 4;
+  },
+  it1915(g) {                                       // Colosseum, with its broken outer ring
+    const outline = () => {
+      g.moveTo(4, 96); g.lineTo(4, 40); g.quadraticCurveTo(40, 30, 66, 33); g.lineTo(66, 46); g.lineTo(78, 46);
+      g.lineTo(78, 58); g.lineTo(90, 58); g.lineTo(90, 72); g.lineTo(96, 72); g.lineTo(96, 96); g.closePath();
+    };
+    inkShape(g, STONE, outline);
+    g.save(); g.beginPath(); outline(); g.clip();
+    archRow(g, 8, 94, 46, 7, 11, 11); archRow(g, 8, 94, 64, 7, 11, 11); archRow(g, 8, 94, 81, 7, 15, 11);
+    g.beginPath(); [44, 61, 78].forEach(y => { g.moveTo(0, y); g.lineTo(100, y); }); g.lineWidth = 1.6; g.stroke();
+    g.restore(); g.lineWidth = 2.4;
+    g.beginPath(); outline(); g.stroke();
+    return 30;
+  },
+  ru1914(g) {                                       // St Basil's Cathedral: tent spire and onion domes
+    inkShape(g, '#b5513a', () => g.rect(10, 62, 80, 34));
+    archRow(g, 16, 86, 74, 6, 22, 12);
+    inkShape(g, STONE, () => { g.moveTo(40, 62); g.lineTo(50, 14); g.lineTo(60, 62); g.closePath(); });
+    inkShape(g, STONE, () => g.rect(16, 52, 14, 10));
+    inkShape(g, STONE, () => g.rect(70, 52, 14, 10));
+    onionDome(g, 23, 52, 18, 22, '#2f7a4a');
+    onionDome(g, 77, 52, 18, 22, '#d4a63a');
+    onionDome(g, 50, 16, 12, 12, '#c23b2a');
+    g.beginPath(); g.moveTo(50, 4); g.lineTo(50, 0); g.stroke();
+    g.beginPath(); for (let y = 24; y < 60; y += 8) { g.moveTo(50 - (y - 14) / 4.8, y); g.lineTo(50 + (y - 14) / 4.8, y); }
+    g.lineWidth = 1.2; g.stroke(); g.lineWidth = 2.4;
+    return 4;
+  },
+  de1914(g) {                                       // Brandenburg Gate with the quadriga
+    inkShape(g, STONE, () => g.rect(8, 50, 84, 46));
+    g.fillStyle = OPENING;
+    [14, 28, 44, 60, 74].forEach((x, k) => g.fillRect(x + 2, k === 2 ? 56 : 60, k === 2 ? 8 : 6, k === 2 ? 40 : 36));
+    inkShape(g, STONE_SHADE, () => g.rect(4, 40, 92, 10));
+    inkShape(g, STONE, () => { g.moveTo(28, 40); g.lineTo(28, 30); g.lineTo(72, 30); g.lineTo(72, 40); g.closePath(); });
+    inkShape(g, '#5f7a5a', () => {                  // copper-green chariot and horses
+      g.moveTo(36, 30); g.lineTo(38, 22); g.lineTo(44, 20); g.lineTo(46, 24); g.lineTo(52, 18); g.lineTo(56, 14);
+      g.lineTo(58, 20); g.lineTo(64, 22); g.lineTo(64, 30); g.closePath();
+    });
+    return 12;
+  },
+  at1914(g) {                                       // St Stephen's Cathedral: gothic spire and patterned roof
+    inkShape(g, STONE, () => g.rect(52, 66, 42, 30));
+    archRow(g, 58, 92, 74, 6, 16, 10);
+    inkShape(g, '#c9a640', () => { g.moveTo(50, 66); g.lineTo(60, 46); g.lineTo(94, 54); g.lineTo(94, 66); g.closePath(); });
+    g.beginPath();                                  // zig-zag roof tiles
+    for (let x = 56; x < 92; x += 6) { g.moveTo(x, 64); g.lineTo(x + 3, 56); g.lineTo(x + 6, 64); }
+    g.strokeStyle = '#2f6a5a'; g.lineWidth = 1.6; g.stroke(); g.strokeStyle = INK; g.lineWidth = 2.4;
+    inkShape(g, STONE, () => g.rect(24, 44, 26, 52));
+    archRow(g, 32, 42, 56, 8, 26, 10);
+    inkShape(g, STONE_SHADE, () => { g.moveTo(24, 44); g.lineTo(37, 2); g.lineTo(50, 44); g.closePath(); });
+    g.beginPath(); for (let y = 14; y < 44; y += 7) { const h = (y - 2) * 13 / 42; g.moveTo(37 - h, y); g.lineTo(37 + h, y); }
+    g.lineWidth = 1.2; g.stroke(); g.lineWidth = 2.4;
+    return 2;
+  },
+  gb1914(g) {                                       // Big Ben (Elizabeth Tower) beside Parliament
+    inkShape(g, STONE_SHADE, () => g.rect(4, 74, 34, 22));
+    inkShape(g, STONE_SHADE, () => g.rect(62, 78, 34, 18));
+    g.fillStyle = OPENING;
+    for (let x = 8; x < 34; x += 7) g.fillRect(x, 80, 3, 9);
+    for (let x = 66; x < 94; x += 7) g.fillRect(x, 83, 3, 8);
+    inkShape(g, STONE, () => g.rect(38, 34, 24, 62));
+    g.beginPath(); for (let y = 58; y < 96; y += 8) { g.moveTo(38, y); g.lineTo(62, y); } g.lineWidth = 1.2; g.stroke(); g.lineWidth = 2.4;
+    inkShape(g, '#fff8e0', () => g.arc(50, 44, 8.5, 0, 2 * Math.PI));
+    g.beginPath(); g.moveTo(50, 44); g.lineTo(50, 38); g.moveTo(50, 44); g.lineTo(54, 46); g.lineWidth = 1.5; g.stroke(); g.lineWidth = 2.4;
+    inkShape(g, STONE, () => g.rect(40, 24, 20, 10));
+    inkShape(g, '#5f6f7a', () => { g.moveTo(38, 24); g.lineTo(50, 4); g.lineTo(62, 24); g.closePath(); });
+    return 4;
+  },
+  tr1915(g) {                                       // Hagia Sophia: great dome and four minarets
+    [[6, 30], [17, 38], [77, 38], [88, 30]].forEach(([x, top]) => {
+      inkShape(g, STONE, () => g.rect(x, top, 6, 96 - top));
+      inkShape(g, '#7a8a96', () => { g.moveTo(x - 1, top); g.lineTo(x + 3, top - 14); g.lineTo(x + 7, top); g.closePath(); });
+      g.beginPath(); g.moveTo(x - 2, top + 12); g.lineTo(x + 8, top + 12); g.stroke();
+    });
+    inkShape(g, '#d9a77a', () => g.rect(24, 62, 52, 34));
+    archRow(g, 30, 72, 72, 6, 24, 9);
+    inkShape(g, '#7a8a96', () => { g.moveTo(24, 62); g.arc(34, 62, 10, Math.PI, 0); g.closePath(); });
+    inkShape(g, '#7a8a96', () => { g.moveTo(56, 62); g.arc(66, 62, 10, Math.PI, 0); g.closePath(); });
+    inkShape(g, '#7a8a96', () => { g.moveTo(30, 62); g.ellipse(50, 62, 20, 22, 0, Math.PI, 0); g.closePath(); });
+    g.beginPath(); g.moveTo(50, 40); g.lineTo(50, 32); g.stroke();
+    return 32;
+  },
+  gr1912(g) {                                       // Parthenon: stepped base, Doric columns, pediment
+    inkShape(g, STONE_SHADE, () => g.rect(4, 88, 92, 8));
+    inkShape(g, STONE, () => g.rect(8, 82, 84, 6));
+    for (let x = 12; x <= 82; x += 10) inkShape(g, STONE, () => g.rect(x, 52, 6, 30));
+    g.beginPath(); for (let x = 12; x <= 82; x += 10) { g.moveTo(x + 3, 55); g.lineTo(x + 3, 80); }
+    g.lineWidth = 1; g.stroke(); g.lineWidth = 2.4;  // fluting
+    inkShape(g, STONE_SHADE, () => g.rect(8, 44, 84, 8));
+    g.beginPath(); for (let x = 12; x < 90; x += 6) { g.moveTo(x, 45); g.lineTo(x, 51); } g.lineWidth = 1.2; g.stroke(); g.lineWidth = 2.4;
+    inkShape(g, STONE, () => { g.moveTo(6, 44); g.lineTo(50, 28); g.lineTo(94, 44); g.closePath(); });
+    return 28;
+  },
+  rs1914(g) {                                       // Belgrade Fortress: crenellated walls, gate and the baroque clock tower
+    const battlements = (x0, x1, y) => { g.fillStyle = STONE_SHADE; for (let x = x0; x < x1; x += 6) { g.beginPath(); g.rect(x, y - 4, 3.5, 4); g.fill(); g.stroke(); } };
+    inkShape(g, STONE_SHADE, () => g.rect(4, 66, 92, 30));
+    battlements(5, 94, 66);
+    inkShape(g, STONE_SHADE, () => g.rect(6, 54, 18, 42));
+    inkShape(g, STONE_SHADE, () => g.rect(76, 54, 18, 42));
+    battlements(7, 24, 54); battlements(77, 94, 54);
+    archRow(g, 12, 18, 64, 6, 10, 10); archRow(g, 82, 88, 64, 6, 10, 10);
+    inkShape(g, STONE, () => g.rect(38, 30, 24, 66));
+    archRow(g, 43, 57, 74, 14, 22, 16);              // gate
+    inkShape(g, '#fff8e0', () => g.arc(50, 44, 7, 0, 2 * Math.PI));
+    g.beginPath(); g.moveTo(50, 44); g.lineTo(50, 39); g.moveTo(50, 44); g.lineTo(53.5, 45.5); g.lineWidth = 1.4; g.stroke(); g.lineWidth = 2.4;
+    inkShape(g, '#5f8a6a', () => {                  // copper bell roof and lantern
+      g.moveTo(36, 30); g.quadraticCurveTo(40, 22, 46, 20); g.quadraticCurveTo(50, 14, 54, 20); g.quadraticCurveTo(60, 22, 64, 30); g.closePath();
+    });
+    inkShape(g, '#5f8a6a', () => { g.moveTo(47, 16); g.lineTo(50, 6); g.lineTo(53, 16); g.closePath(); });
+    return 6;
+  },
+  bg1915(g) {                                       // Alexander Nevsky Cathedral: golden central dome, green domes, bell tower
+    inkShape(g, STONE, () => g.rect(12, 66, 76, 30));
+    archRow(g, 18, 84, 74, 7, 22, 11);
+    inkShape(g, STONE, () => g.rect(20, 50, 16, 16));
+    inkShape(g, STONE, () => g.rect(64, 50, 16, 16));
+    inkShape(g, '#5f8a6a', () => { g.moveTo(20, 50); g.arc(28, 50, 8, Math.PI, 0); g.closePath(); });
+    inkShape(g, '#5f8a6a', () => { g.moveTo(64, 50); g.arc(72, 50, 8, Math.PI, 0); g.closePath(); });
+    inkShape(g, STONE, () => g.rect(38, 40, 24, 26));
+    archRow(g, 42, 58, 46, 4, 12, 7);
+    inkShape(g, '#d4a63a', () => { g.moveTo(36, 40); g.ellipse(50, 40, 14, 16, 0, Math.PI, 0); g.closePath(); });
+    inkShape(g, '#d4a63a', () => { g.moveTo(47, 24); g.lineTo(47, 18); g.quadraticCurveTo(50, 13, 53, 18); g.lineTo(53, 24); g.closePath(); });
+    g.beginPath(); g.moveTo(50, 14); g.lineTo(50, 8); g.moveTo(47.5, 10.5); g.lineTo(52.5, 10.5); g.stroke();
+    return 8;
+  },
+};
+
+// Flags, painted into a w x h box. Keys match UNIFORMS ids.
+const stripes = (g, w, h, colors, vertical = false) => colors.forEach((c, k) => {
+  g.fillStyle = c;
+  if (vertical) g.fillRect(k * w / colors.length, 0, w / colors.length + 0.5, h);
+  else g.fillRect(0, k * h / colors.length, w, h / colors.length + 0.5);
+});
+const FLAG_RED = '#c0262c', FLAG_BLUE = '#23387a', FLAG_WHITE = '#f4f0e0', FLAG_GREEN = '#2f8a3a';
+const FLAG_PAINTERS = {
+  fr1914: (g, w, h) => stripes(g, w, h, ['#2b4a9b', FLAG_WHITE, FLAG_RED], true),
+  it1915: (g, w, h) => stripes(g, w, h, [FLAG_GREEN, FLAG_WHITE, FLAG_RED], true),
+  ru1914: (g, w, h) => stripes(g, w, h, [FLAG_WHITE, '#2b4a9b', FLAG_RED]),
+  de1914: (g, w, h) => stripes(g, w, h, ['#1a1a1a', FLAG_WHITE, FLAG_RED]),
+  at1914: (g, w, h) => stripes(g, w, h, [FLAG_RED, FLAG_WHITE, FLAG_RED]),
+  rs1914: (g, w, h) => stripes(g, w, h, [FLAG_RED, FLAG_BLUE, FLAG_WHITE]),
+  bg1915: (g, w, h) => stripes(g, w, h, [FLAG_WHITE, '#1f8a4a', FLAG_RED]),
+  gb1914(g, w, h) {                                 // Union Jack
+    g.fillStyle = FLAG_BLUE; g.fillRect(0, 0, w, h);
+    const cross = (width, color, diag) => {
+      g.beginPath();
+      if (diag) { g.moveTo(0, 0); g.lineTo(w, h); g.moveTo(w, 0); g.lineTo(0, h); }
+      else { g.moveTo(w / 2, 0); g.lineTo(w / 2, h); g.moveTo(0, h / 2); g.lineTo(w, h / 2); }
+      g.lineWidth = width; g.strokeStyle = color; g.lineCap = 'butt'; g.stroke();
+    };
+    cross(h * 0.2, FLAG_WHITE, true); cross(h * 0.07, FLAG_RED, true);
+    cross(h * 0.34, FLAG_WHITE, false); cross(h * 0.2, FLAG_RED, false);
+  },
+  tr1915(g, w, h) {                                 // red field, white crescent and star
+    g.fillStyle = FLAG_RED; g.fillRect(0, 0, w, h);
+    g.fillStyle = FLAG_WHITE; g.beginPath(); g.arc(w * 0.4, h / 2, h * 0.27, 0, 2 * Math.PI); g.fill();
+    g.fillStyle = FLAG_RED; g.beginPath(); g.arc(w * 0.45, h / 2, h * 0.22, 0, 2 * Math.PI); g.fill();
+    g.fillStyle = FLAG_WHITE; g.beginPath();
+    for (let k = 0; k < 10; k++) {
+      const a = Math.PI + k * Math.PI / 5, rr = (k % 2 ? 0.45 : 1) * h * 0.12;
+      g.lineTo(w * 0.62 + rr * Math.cos(a), h / 2 + rr * Math.sin(a));
+    }
+    g.fill();
+  },
+  gr1912(g, w, h) {                                 // nine blue and white stripes, white cross on blue canton
+    stripes(g, w, h, Array.from({ length: 9 }, (_, k) => (k % 2 ? FLAG_WHITE : '#1f5fae')));
+    const c = h * 5 / 9;
+    g.fillStyle = '#1f5fae'; g.fillRect(0, 0, c, c);
+    g.fillStyle = FLAG_WHITE; g.fillRect(c * 0.4, 0, c * 0.2, c); g.fillRect(0, c * 0.4, c, c * 0.2);
+  },
+};
+function paintFlag(g, u, w, h) {
+  g.save();
+  (FLAG_PAINTERS[u.id] || FLAG_PAINTERS.fr1914)(g, w, h);
+  g.restore();
+}
+const flagCache = new Map();
+function flagImage(u) {                             // 4x oversampled source for the waving flag
+  if (!flagCache.has(u.id)) {
+    const c = document.createElement('canvas');
+    c.width = 96; c.height = 64;
+    paintFlag(c.getContext('2d'), u, 96, 64);
+    flagCache.set(u.id, c);
+  }
+  return flagCache.get(u.id);
+}
+// Flag on a pole planted at (x, baseY), drawn in vertical slices on a sine wave so it seems to flutter.
+function paintFlagpole(g, u, x, baseY) {
+  const top = baseY - 28, w = 24, h = 16, amp = 1.6, slices = 12, src = flagImage(u);
+  const wave = t => amp * Math.sin(t * Math.PI * 1.6) * t;
+  g.beginPath(); g.moveTo(x, baseY); g.lineTo(x, top); g.lineWidth = 1.8; g.strokeStyle = INK; g.stroke();
+  for (let k = 0; k < slices; k++) {
+    const sw = src.width / slices;
+    g.drawImage(src, k * sw, 0, sw, src.height, x + 0.5 + k * w / slices, top + 2 + wave(k / slices), w / slices + 0.4, h);
+  }
+  g.beginPath();
+  for (let k = 0; k <= slices; k++) g.lineTo(x + 0.5 + k * w / slices, top + 2 + wave(Math.min(k, slices - 1) / slices));
+  for (let k = slices; k >= 0; k--) g.lineTo(x + 0.5 + k * w / slices, top + 2 + h + wave(Math.min(k, slices - 1) / slices));
+  g.closePath(); g.lineWidth = 1; g.stroke();
+  paintStar(g, x, top - 1, 3.4);                    // gold finial
+}
+function paintStar(g, cx, cy, size) {
+  g.beginPath();
+  for (let k = 0; k < 10; k++) {
+    const a = -Math.PI / 2 + k * Math.PI / 5, rr = k % 2 ? size * 0.45 : size;
+    g.lineTo(cx + rr * Math.cos(a), cy + rr * Math.sin(a));
+  }
+  g.closePath();
+  g.fillStyle = '#f2c230'; g.fill();
+  g.lineWidth = size * 0.22; g.stroke();
+}
+// Landmark in a 100x130 box: 30 units of headroom above the 100x100 building for the flag.
+function paintLandmark(g, u) {
+  g.save();
+  g.translate(0, 30);
+  g.lineJoin = 'round'; g.lineCap = 'round'; g.lineWidth = 2.4; g.strokeStyle = INK;
+  g.fillStyle = 'rgba(59, 42, 26, .25)';            // ground shadow
+  g.beginPath(); g.ellipse(50, 96, 48, 4, 0, 0, 2 * Math.PI); g.fill();
+  const tip = (LANDMARK_PAINTERS[u.id] || LANDMARK_PAINTERS.fr1914)(g);
+  g.strokeStyle = INK;
+  paintFlagpole(g, u, 50, tip);
+  g.restore();
+}
+const landmarkCache = new Map();
+function landmarkIcon(uniform) {
+  if (!landmarkCache.has(uniform.id)) {
+    const c = document.createElement('canvas');
+    c.width = 200; c.height = 260;                  // 2x oversampled
+    const g = c.getContext('2d');
+    g.scale(2, 2);
+    paintLandmark(g, uniform);
+    landmarkCache.set(uniform.id, c);
+  }
+  return landmarkCache.get(uniform.id);
+}
+// A capital shows its landmark instead of the soldier pill: landmark left of the centre, count badge
+// to its right (see drawSoldierToken). Clipped to the province so it never spills into a neighbour.
+function landmarkBox(prov) {
+  const r = tokenRadius, { x, y } = prov.site, w = 2.9 * r, h = w * 1.3;
+  return { x: x - 0.1 * r - w, y: y + 0.9 * r - h, w, h };
+}
+function drawCapitalLandmark(prov) {
+  const b = landmarkBox(prov);
+  ctx.save();                                     // not clipped: the building and flag may overhang neighbours or sea
+  ctx.drawImage(landmarkIcon(uniformAt(prov.id)), b.x, b.y, b.w, b.h);
+  ctx.restore();
+}
+
+function soldierIcon(uniform) {
+  if (!soldierIconCache.has(uniform.id)) {
+    const c = document.createElement('canvas');
+    c.width = c.height = 208;                    // 2x oversampled for crisp scaling
+    const g = c.getContext('2d');
+    g.scale(2, 2);
+    paintSoldier(g, uniform);
+    soldierIconCache.set(uniform.id, c);
+  }
+  return soldierIconCache.get(uniform.id);
+}
+
+// Badge at the province centre: soldier (owner's uniform) on parchment + soldier count in owner colour.
+function drawSoldierToken(prov, isSelected) {
+  const { owner } = state.provinceStates[prov.id];
+  const soldiers = state.provinceStates[prov.id].soldiers + (fx.hold[prov.id] || 0);   // troops still marching are not counted yet
+  const hex = ownerColor(prov.id), light = hexLuminance(hex) > 0.5;
+  const r = tokenRadius, { x, y } = prov.site;
+  const left = x - 1.75 * r, top = y - r, width = 3.5 * r, height = 2 * r;
+  const pill = () => { ctx.beginPath(); ctx.roundRect(left, top, width, height, r); };
+  const k = state.view.scale * state.view.dpr;  // shadow sizes are in device pixels
+  const capital = isCapital(prov.id);
+  ctx.save();
+  ctx.globalAlpha = soldiers > 0 ? 1 : 0.45;
+  if (!capital) {
+  ctx.shadowColor = 'rgba(0, 0, 0, .5)';
+  ctx.shadowBlur = r * 0.4 * k;
+  ctx.shadowOffsetY = r * 0.12 * k;
+  pill();
+  ctx.fillStyle = '#f3e6c8';                     // parchment
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  ctx.save();
+  ctx.clip();
+  if (owner === ROGUE) ctx.filter = 'grayscale(1)';
+  ctx.drawImage(soldierIcon(uniformAt(prov.id)), left + 0.12 * r, top + 0.02 * r, 2.15 * r, 2.15 * r);
+  ctx.restore();
+  pill();
+  if (isSelected) {
+    ctx.lineWidth = r * 0.32;
+    ctx.strokeStyle = '#fff8e8';
+    ctx.stroke();
+  }
+  ctx.lineWidth = r * 0.12;
+  ctx.strokeStyle = '#3b2a1a';
+  ctx.stroke();
+  }
+  // Count badge: a circle inscribed in the pill's right end; for 3+ digits it stretches out to the
+  // right (not over the soldier icon) and the font shrinks if needed.
+  const label = String(soldiers), br = r * 0.9, bl = x - 0.05 * r + (capital ? 0.1 * r : 0);
+  let size = r * (label.length > 1 ? 1.2 : 1.35);
+  ctx.font = `bold ${size}px Georgia, serif`;
+  const textW = ctx.measureText(label).width, maxW = r * 2;
+  if (textW > maxW) { size *= maxW / textW; ctx.font = `bold ${size}px Georgia, serif`; }
+  const bw = Math.max(2 * br, Math.min(textW, maxW) + r * 0.5), bx = bl + bw / 2;
+  ctx.beginPath();
+  ctx.roundRect(bl, y - br, bw, 2 * br, br);
+  if (capital) {                                 // no pill around it: give the badge its own shadow and selection rim
+    ctx.shadowColor = 'rgba(0, 0, 0, .5)';
+    ctx.shadowBlur = r * 0.4 * k;
+    ctx.shadowOffsetY = r * 0.12 * k;
+  }
+  ctx.fillStyle = hex;
+  ctx.fill();
+  ctx.shadowColor = 'transparent';
+  if (capital && isSelected) {
+    ctx.lineWidth = r * 0.32;
+    ctx.strokeStyle = '#fff8e8';
+    ctx.stroke();
+  }
+  ctx.lineWidth = r * 0.1;
+  ctx.strokeStyle = '#3b2a1a';
+  ctx.stroke();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.lineJoin = 'round';
+  ctx.lineWidth = size * 0.14;                   // contrasting rim keeps digits crisp on any owner colour
+  ctx.strokeStyle = light ? 'rgba(255, 248, 232, .7)' : 'rgba(26, 18, 8, .7)';
+  ctx.strokeText(label, bx, y + size * 0.05);
+  ctx.fillStyle = light ? '#1a1208' : '#fff8e8';
+  ctx.fillText(label, bx, y + size * 0.05);
+  ctx.restore();
+}
+
+// Shared outline runs between provinces with different owners. Neighbouring outlines share exact
+// vertices (borders are generated once per pair), so a vertex key lookup finds the common border.
+let stateBorderCache = { key: null, segments: [] };
+function stateBorderSegments() {
+  const key = state.seed + ':' + state.provinceStates.map(p => p.owner).join('');
+  if (stateBorderCache.key === key) return stateBorderCache.segments;
+  const vkey = p => `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
+  const vertexSets = world.provinces.map(p => new Set(p.outline.map(vkey)));
+  const segments = [];
+  world.provinces.forEach(p => p.neighbours.forEach(n => {
+    if (n < p.id || ownerOf(n) === ownerOf(p.id)) return;   // each foreign pair once
+    const out = p.outline, len = out.length;
+    const shared = out.map(pt => vertexSets[n].has(vkey(pt)));
+    let start = shared.findIndex((v, k) => !v);              // begin outside the shared run
+    if (start < 0) start = 0;
+    let run = [];
+    for (let k = 0; k <= len; k++) {
+      const idx = (start + k) % len;
+      if (shared[idx] && k < len) run.push(out[idx]);
+      else { if (run.length > 1) segments.push(run); run = []; }
+    }
+  }));
+  stateBorderCache = { key, segments };
+  return segments;
+}
+
+function landBounds(w) {
+  const pts = w.provinces.flatMap(p => p.outline);
+  return { minX: Math.min(...pts.map(p => p.x)), maxX: Math.max(...pts.map(p => p.x)),
+           minY: Math.min(...pts.map(p => p.y)), maxY: Math.max(...pts.map(p => p.y)) };
+}
+
+function resize() {
+  const dpr = window.devicePixelRatio || 1;
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = Math.round(w * dpr);
+  canvas.height = Math.round(h * dpr);
+  // Fit the continent, not the whole generated world: the margin keeps room for the coast halo,
+  // floating "+n" texts and a strip of sea.
+  const b = landBounds(world), m = tokenRadius * 2.2;
+  const bw = b.maxX - b.minX + 2 * m, bh = b.maxY - b.minY + 2 * m;
+  const scale = Math.min(w / bw, h / bh);
+  state.view = { w, h, dpr, scale, ox: (w - bw * scale) / 2 - (b.minX - m) * scale, oy: (h - bh * scale) / 2 - (b.minY - m) * scale };
+  buildOldMapLayer();
+  render();
+}
+
+// ---------- Interaction ----------
+function provinceAt(cssX, cssY) {
+  applyWorldTransform();
+  const { dpr } = state.view;
+  const i = paths.findIndex(p => ctx.isPointInPath(p, cssX * dpr, cssY * dpr));
+  return i >= 0 ? world.provinces[i] : null;
+}
+
+function setLabel(el, text, emptyText) {
+  el.textContent = text ?? emptyText;
+  el.classList.toggle('empty', text == null);
+}
+
+function setOwnerChip(el, provinceId) {
+  const owner = ownerOf(provinceId);
+  if (owner == null) { el.removeAttribute('style'); el.removeAttribute('title'); return; }
+  el.style.background = playerHex(owner);
+  el.title = owner === ROGUE ? 'Rogue province: no master'
+    : `Owned by ${playerName(owner)}${isCapital(provinceId) ? ` (capital, ${uniformFor(owner).landmark})` : ''}`;
+}
+
+let sidebarSnapshot = '';
+function updateSidebar() {
+  const players = Array.from({ length: state.playerCount }, (_, p) => {
+    const provinces = provincesOf(p);
+    return { ...settings.players[p], uniform: uniformFor(p).id, provinces: provinces.length,
+      soldiers: provinces.reduce((n, id) => n + state.provinceStates[id].soldiers + (fx.hold[id] || 0), 0),
+      reinforcements: reinforcementsFor(p), out: !!state.out[p],
+      capital: state.capitals[p] == null ? null : provinceName(state.capitals[p]), landmark: uniformFor(p).landmark };
+  });
+  const snapshot = JSON.stringify([players, state.currentPlayer, state.eventLog]);
+  if (snapshot === sidebarSnapshot) return;       // mouse hover updates need no DOM or uniform repaint
+  sidebarSnapshot = snapshot;
+  document.getElementById('players-list').replaceChildren(...players.map((player, p) => {
+    const card = document.createElement('li');
+    card.className = 'player-card';
+    card.dataset.player = p;
+    card.classList.toggle('current', p === state.currentPlayer);
+    card.classList.toggle('eliminated', player.out);
+    if (p === state.currentPlayer) card.setAttribute('aria-current', 'true');
+    card.style.setProperty('--card-color', colorHex(player.color));
+    card.innerHTML = '<div class="player-heading"><canvas width="104" height="104" aria-hidden="true"></canvas>' +
+      '<span class="chip mini"></span><span class="player-name"></span><span class="ai-badge"></span></div>' +
+      '<div class="player-stats"><span class="player-provinces"></span><span class="player-soldiers"></span></div>' +
+      '<span class="player-reinforcements"></span>';
+    card.querySelector('.chip').style.background = colorHex(player.color);
+    const name = card.querySelector('.player-name');
+    name.textContent = player.name;
+    name.title = player.name;
+    const badge = card.querySelector('.ai-badge');
+    badge.textContent = player.ai ? '\u{1F916}' : '';
+    if (player.ai) badge.setAttribute('aria-label', 'Computer player');
+    card.querySelector('.player-provinces').textContent = plural(player.provinces, 'province');
+    card.querySelector('.player-soldiers').textContent = plural(player.soldiers, 'soldier');
+    const reinf = card.querySelector('.player-reinforcements');
+    reinf.textContent = player.out ? 'Capital lost: out of the game'
+      : player.capital == null ? 'Capital not founded yet' : `+${player.reinforcements} next turn \u00b7 \u2605 ${player.capital}`;
+    reinf.title = player.out ? '' : `Capital${player.capital ? ` ${player.capital}` : ''}, crowned by the ${player.landmark}. ` +
+      'Only provinces connected to the capital count for reinforcements (the capital itself does not).';
+    paintSoldier(card.querySelector('canvas').getContext('2d'), uniformFor(p));
+    return card;
+  }));
+  const log = document.getElementById('event-log');
+  log.replaceChildren(...state.eventLog.map(({ player, text }) => {
+    const entry = document.createElement('li'), dot = document.createElement('span');
+    dot.className = 'chip mini';
+    dot.style.background = playerHex(player);
+    dot.title = playerName(player);
+    entry.append(dot, document.createTextNode(text));
+    return entry;
+  }));
+  if (!state.eventLog.length) {
+    const empty = document.createElement('li');
+    empty.className = 'log-empty';
+    empty.textContent = 'The chronicle awaits your first move.';
+    log.append(empty);
+  }
+}
+
+function recordEvents(player, lines) {
+  state.eventLog.unshift(...[...lines].reverse().map(text => ({ player, text })));
+  state.eventLog.length = Math.min(state.eventLog.length, 8);
+}
+
+function recordTurnLog(...lines) {
+  state.turnLog.push(...lines);
+  recordEvents(state.currentPlayer, lines);
+}
+
+function updateInfo() {
+  updateSidebar();
+  const sel = world.provinces[state.selectedId];
+  setLabel(hoverEl, world.provinces[state.hoveredId]?.name, '—');
+  setLabel(selectedEl, sel?.name, 'none');
+  setOwnerChip(document.getElementById('hover-chip'), state.hoveredId);
+  setOwnerChip(document.getElementById('selected-chip'), state.selectedId);
+  setLabel(neighboursEl, sel ? sel.neighbours.map(n => world.provinces[n].name).join(', ') : null, '—');
+}
+
+function eventPos(e) {
+  const rect = canvas.getBoundingClientRect();
+  return [e.clientX - rect.left, e.clientY - rect.top];
+}
+
+canvas.addEventListener('mousemove', e => {
+  const id = provinceAt(...eventPos(e))?.id ?? null;
+  if (id === state.hoveredId) return;
+  state.hoveredId = id;
+  const sel = state.selectedId;
+  canvas.style.cursor = id == null ? 'default'
+    : attackTargets(sel).includes(id) ? 'crosshair'
+    : (canSelectAsSource(id) || moveTargets(sel).includes(id) ||
+       (state.phase === 'reinforce' && connectedToCapital(state.currentPlayer).has(id)) ||
+       (state.phase === 'capital' && ownerOf(id) === state.currentPlayer)) ? 'pointer' : 'default';
+  updateInfo(); render();
+});
+canvas.addEventListener('mouseleave', () => {
+  state.hoveredId = null;
+  updateInfo(); render();
+});
+// ---------- Rules (Risk) ----------
+const RULES = {
+  minReinforcements: 1,         // per turn: max(1, floor(n / 3)), n = provinces connected to the capital, capital excluded;
+  provincesPerReinforcement: 3, // 0 if n = 0
+  capitalExtraDefendDice: 1,    // a capital defends with one more die...
+  capitalDieBonus: 1,           // ...and +1 on each defending die (max 6)
+  maxAttackDice: 3,             // attacker: up to 3 dice, always leaving 1 soldier behind
+  maxDefendDice: 2,             // defender: up to 2 dice (rolled automatically)
+  rollAnimationMs: 1000,
+};
+// Opening round: every player but the last only reinforces, so the first mover gets no head start.
+const reinforceOnlyTurn = () => state.round === 1 && state.currentPlayer < state.playerCount - 1;
+const provincesOf = player => state.provinceStates.flatMap((p, i) => (p.owner === player ? [i] : []));
+const isCapital = id => { const o = ownerOf(id); return o !== ROGUE && o != null && state.capitals[o] === id; };
+// Own provinces reachable from the capital through an unbroken chain of own provinces (capital included).
+function connectedToCapital(player) {
+  const cap = state.capitals[player], seen = new Set();
+  if (cap == null || ownerOf(cap) !== player) return seen;
+  const todo = [cap];
+  seen.add(cap);
+  while (todo.length) for (const n of world.provinces[todo.pop()].neighbours)
+    if (ownerOf(n) === player && !seen.has(n)) { seen.add(n); todo.push(n); }
+  return seen;
+}
+function reinforcementsFor(player) {
+  if (state.out[player]) return 0;
+  const n = state.capitals[player] == null ? provincesOf(player).length - 1 : connectedToCapital(player).size - 1;
+  return n <= 0 ? 0 : Math.max(RULES.minReinforcements, Math.floor(n / RULES.provincesPerReinforcement));
+}
+const maxAttackDice = soldiers => Math.max(0, Math.min(RULES.maxAttackDice, soldiers - 1));
+const defendDiceFor = (soldiers, capital = false) =>
+  Math.min(RULES.maxDefendDice + (capital ? RULES.capitalExtraDefendDice : 0), soldiers);
+
+let diceRng = Math.random;                         // swappable for deterministic tests
+const rollDice = n => Array.from({ length: n }, () => 1 + Math.floor(diceRng() * 6));
+
+// Pair highest vs highest, second vs second; the higher die wins, ties go to the defender.
+function resolveDice(attack, defend) {
+  const a = [...attack].sort((x, y) => y - x), d = [...defend].sort((x, y) => y - x);
+  const pairs = [];
+  for (let k = 0; k < Math.min(a.length, d.length); k++)
+    pairs.push({ a: a[k], d: d[k], winner: a[k] > d[k] ? 'attacker' : 'defender' });
+  return { attack: a, defend: d, pairs,
+           attackerLosses: pairs.filter(p => p.winner === 'defender').length,
+           defenderLosses: pairs.filter(p => p.winner === 'attacker').length };
+}
+
+// ---------- Actions ----------
+const provinceName = id => world.provinces[id].name;
+const playerName = i => (i === ROGUE ? 'rogue lands' : settings.players[i].name);
+const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+const diceText = n => `${n} ${n === 1 ? 'die' : 'dice'}`;
+
+// A move may take every soldier (the province is left empty); an attack needs 2+ since 1 stays behind.
+function canSelectAsSource(id) {
+  const ps = state.provinceStates[id];
+  // 'battle' too: rollAttack re-validates the attack while the battle dialog is open.
+  return (state.phase === 'action' || state.phase === 'battle') &&
+         ps?.owner === state.currentPlayer && ps.soldiers >= 1;
+}
+const canAttackFrom = id => canSelectAsSource(id) && state.provinceStates[id].soldiers >= 2;
+function moveTargets(fromId) {
+  if (fromId == null || !canSelectAsSource(fromId)) return [];
+  return world.provinces[fromId].neighbours.filter(n => ownerOf(n) === state.currentPlayer);
+}
+function attackTargets(fromId) {
+  if (fromId == null || !canAttackFrom(fromId)) return [];
+  return world.provinces[fromId].neighbours.filter(n => ownerOf(n) !== state.currentPlayer);
+}
+
+function placeReinforcement(id, count = 1) {
+  if (state.phase !== 'reinforce' || ownerOf(id) !== state.currentPlayer)
+    throw new Error(`[reinforce] cannot place on ${id} (phase=${state.phase}, owner=${ownerOf(id)}, player=${state.currentPlayer}).`);
+  if (!connectedToCapital(state.currentPlayer).has(id))
+    throw new Error(`[reinforce] ${provinceName(id)} is cut off from the capital; UI should have prevented it.`);
+  const n = Math.min(count, state.reinforcementsLeft);
+  state.provinceStates[id].soldiers += n;
+  state.reinforcementsLeft -= n;
+  state.placed[id] = (state.placed[id] || 0) + n;
+  fxPulse(id, playerHex(state.currentPlayer));
+  fxFloatText(id, `+${n}`, GAIN_COLOR);
+  if (state.reinforcementsLeft === 0) {
+    state.phase = 'action';
+    const where = Object.entries(state.placed).map(([pid, k]) => `${provinceName(pid)} +${k}`).join(', ');
+    recordTurnLog(`${playerName(state.currentPlayer)} reinforced ${where}.`);
+    console.info(`[reinforce] ${state.turnLog.at(-1)}`);
+  }
+}
+
+function moveSoldiers(fromId, toId, count) {
+  if (!moveTargets(fromId).includes(toId))
+    throw new Error(`[move] illegal move ${fromId}->${toId} for player ${state.currentPlayer}; UI should have prevented it.`);
+  const src = state.provinceStates[fromId], dst = state.provinceStates[toId];
+  if (!Number.isInteger(count) || count < 1 || count > src.soldiers)
+    throw new Error(`[move] invalid count ${count}: must be 1..${src.soldiers} soldiers in ${provinceName(fromId)}.`);
+  src.soldiers -= count;
+  dst.soldiers += count;                          // armies merge in the target province
+  const summary = `${playerName(state.currentPlayer)} moved ${plural(count, 'soldier')} from ` +
+                  `${provinceName(fromId)} to ${provinceName(toId)} (now ${dst.soldiers})` +
+                  (src.soldiers ? '.' : `, leaving ${provinceName(fromId)} undefended.`);
+  console.info(`[move] ${summary}`);
+  return summary;
+}
+
+// One dice roll of an attack. Mutates soldier counts; ownership changes only via occupy().
+function rollAttack(fromId, toId, attackDice) {
+  if (!attackTargets(fromId).includes(toId))
+    throw new Error(`[attack] illegal attack ${fromId}->${toId} for player ${state.currentPlayer}.`);
+  const src = state.provinceStates[fromId], dst = state.provinceStates[toId];
+  if (!Number.isInteger(attackDice) || attackDice < 1 || attackDice > maxAttackDice(src.soldiers))
+    throw new Error(`[attack] invalid dice ${attackDice}: must be 1..${maxAttackDice(src.soldiers)} with ${src.soldiers} soldiers.`);
+  const capital = isCapital(toId);
+  const attack = rollDice(attackDice);             // attacker's dice first (deterministic order for tests)
+  const defend = rollDice(defendDiceFor(dst.soldiers, capital)).map(v => (capital ? Math.min(6, v + RULES.capitalDieBonus) : v));
+  const result = resolveDice(attack, defend);
+  result.capital = capital;
+  src.soldiers -= result.attackerLosses;
+  dst.soldiers -= result.defenderLosses;
+  result.conquered = dst.soldiers === 0;
+  result.summary = `${playerName(state.currentPlayer)} attacked ${capital ? 'the capital ' : ''}${provinceName(toId)} (${playerName(dst.owner)}) from ` +
+    `${provinceName(fromId)}: ${result.attack.join('-')} vs ${result.defend.join('-')}, ` +
+    `attacker lost ${result.attackerLosses}, defender lost ${result.defenderLosses}.`;
+  console.info(`[attack] ${result.summary}`);
+  return result;
+}
+
+// After a conquering roll: move at least as many soldiers as dice rolled (and leave 1 behind).
+function occupy(fromId, toId, count, diceRolled) {
+  const src = state.provinceStates[fromId], dst = state.provinceStates[toId];
+  const max = src.soldiers - 1, min = Math.min(diceRolled, max);
+  if (dst.soldiers !== 0) throw new Error(`[occupy] ${provinceName(toId)} still has ${dst.soldiers} defenders.`);
+  if (!Number.isInteger(count) || count < min || count > max)
+    throw new Error(`[occupy] invalid count ${count}: must be ${min}..${max}.`);
+  const loser = dst.owner;
+  dst.owner = state.currentPlayer;
+  dst.soldiers = count;
+  src.soldiers -= count;
+  const summary = `${playerName(state.currentPlayer)} conquered ${provinceName(toId)} and moved in ${plural(count, 'soldier')}.`;
+  console.info(`[occupy] ${summary} ${playerName(loser)} has ${provincesOf(loser).length} province(s) left.`);
+  return summary;
+}
+
+// ---------- Board clicks ----------
+// Opening round: once reinforcements are placed, the turn passes automatically. Returns true if it did.
+function endOpeningTurn() {
+  if (!reinforceOnlyTurn()) return false;
+  console.info(`[turn] round 1: ${playerName(state.currentPlayer)} only reinforces; turn passes automatically.`);
+  afterEffects(fxIdle(), 'reinforcements arriving', () => endTurn('Opening round: reinforcements only, no attack or move.'));
+  return true;
+}
+
+// First turn of each player: pick the capital, then reinforcements are counted from it.
+function chooseCapital(id) {
+  const me = state.currentPlayer;
+  if (state.phase !== 'capital' || ownerOf(id) !== me)
+    throw new Error(`[capital] cannot found the capital in ${id} (phase=${state.phase}, owner=${ownerOf(id)}, player=${me}).`);
+  state.capitals[me] = id;
+  recordTurnLog(`${playerName(me)} founded the capital in ${provinceName(id)}.`);
+  console.info(`[capital] ${state.turnLog.at(-1)}`);
+  fxPulse(id, playerHex(me));
+  startReinforcements();
+}
+
+function handleProvinceClick(id) {
+  const sel = state.selectedId, me = state.currentPlayer, phase = state.phase;
+  if (phase === 'capital') {
+    if (id != null && ownerOf(id) === me) chooseCapital(id);
+    else if (id != null) showHint(`${provinceName(id)} belongs to ${playerName(ownerOf(id))}. Choose the capital among your own provinces.`);
+    if (state.phase === 'reinforce') showHint('Capital founded. Now place your reinforcements.');
+  } else if (phase === 'reinforce') {
+    if (id != null && ownerOf(id) === me && !connectedToCapital(me).has(id))
+      showHint(`${provinceName(id)} is cut off from your capital. Reinforcements only reach provinces connected to it.`);
+    else if (id != null && ownerOf(id) === me) placeReinforcement(id, lastClickShift ? state.reinforcementsLeft : 1);
+    else if (id != null) showHint(`${provinceName(id)} belongs to ${playerName(ownerOf(id))}. Place reinforcements in your own provinces.`);
+    if (state.phase === 'action' && !endOpeningTurn()) showHint('Reinforcements placed. Attack as often as you like, then move once or end your turn.');
+  } else if (phase === 'over') {
+    state.selectedId = id === sel ? null : id;       // observing the final map: selection only shows names
+  } else if (phase === 'action') {
+    if (id == null || id === sel) {
+      state.selectedId = null;
+    } else if (sel != null && attackTargets(sel).includes(id)) {
+      startBattle(sel, id);
+    } else if (sel != null && moveTargets(sel).includes(id)) {
+      askMove(sel, id);
+    } else if (canSelectAsSource(id)) {
+      state.selectedId = id;
+    } else if (ownerOf(id) === me && state.provinceStates[id].soldiers === 0) {
+      showHint(`${provinceName(id)} has no soldiers to move or attack with.`);
+    } else if (sel != null && world.provinces[sel].neighbours.includes(id)) {
+      showHint(`${provinceName(sel)} has only 1 soldier: attacking needs 2+, since 1 must stay behind.`);
+    } else if (sel != null) {
+      showHint(`${provinceName(id)} does not border ${provinceName(sel)}. Soldiers act on neighbouring provinces only.`);
+    } else {
+      showHint(`${provinceName(id)} belongs to ${playerName(ownerOf(id))}. First select one of your provinces with soldiers.`);
+    }
+  }
+  updateInfo(); render(); updateTurnUI();
+}
+
+// ---------- Move dialog ----------
+const troopsDialog = document.getElementById('troops-dialog');
+const troopsRange = document.getElementById('troops-range');
+const troopsValue = document.getElementById('troops-value');
+troopsRange.addEventListener('input', () => { troopsValue.textContent = troopsRange.value; });
+
+function askMove(fromId, toId) {
+  const max = state.provinceStates[fromId].soldiers;
+  document.getElementById('troops-title').textContent = `March to ${provinceName(toId)}`;
+  document.getElementById('troops-text').textContent =
+    `How many soldiers leave ${provinceName(fromId)}? Moving all of them leaves it undefended. Moving ends your turn.`;
+  const value = Math.max(1, max - 1);              // emptying the province must be a deliberate choice
+  Object.assign(troopsRange, { min: 1, max, value });
+  troopsRange.disabled = max === 1;
+  troopsValue.textContent = value;
+  troopsDialog.returnValue = '';
+  troopsDialog.onclose = () => {
+    if (troopsDialog.returnValue !== 'ok') return;
+    const count = Number(troopsRange.value), summary = moveSoldiers(fromId, toId, count);
+    state.selectedId = null;
+    afterEffects(marchTroops(fromId, toId, count), 'troops on the march', () => endTurn(summary));
+    updateInfo(); render();
+  };
+  troopsDialog.showModal();
+}
+
+// ---------- Battle dialog ----------
+const battleDialog = document.getElementById('battle-dialog');
+const $b = id => document.getElementById(id);
+const PIP_LAYOUT = { 1: [4], 2: [0, 8], 3: [0, 4, 8], 4: [0, 2, 6, 8], 5: [0, 2, 4, 6, 8], 6: [0, 2, 3, 5, 6, 8] };
+
+function dieElement(color, value) {
+  const el = document.createElement('div');
+  el.className = `die ${color}`;
+  el.innerHTML = '<i></i>'.repeat(9);
+  setDieFace(el, value);
+  return el;
+}
+function setDieFace(el, value) {
+  const on = new Set(PIP_LAYOUT[value] || []);
+  [...el.children].forEach((pip, k) => pip.classList.toggle('on', on.has(k)));
+  el.classList.toggle('blank', !value);
+  el.dataset.value = value || '';
+}
+
+function renderBattleSides() {
+  const b = state.battle, src = state.provinceStates[b.fromId], dst = state.provinceStates[b.toId];
+  $b('battle-target').textContent = provinceName(b.toId);
+  [['att', b.fromId, src], ['def', b.toId, dst]].forEach(([side, pid, ps]) => {
+    $b(`battle-${side}-name`).textContent = playerName(ps.owner);
+    $b(`battle-${side}-name`).style.setProperty('--c', playerHex(ps.owner));
+    $b(`battle-${side}-prov`).textContent = (isCapital(pid) ? '\u2605 ' : '') + provinceName(pid);
+    $b(`battle-${side}-troops`).textContent = plural(ps.soldiers, 'soldier');
+    const icon = $b(`battle-${side}-icon`), g = icon.getContext('2d');
+    g.clearRect(0, 0, icon.width, icon.height);
+    paintSoldier(g, uniformAt(pid));
+  });
+}
+
+// Dice columns: rows line up so each row is one comparison (highest vs highest, ...).
+function renderDiceRows(attack, defend) {
+  const rows = $b('dice-rows');
+  rows.innerHTML = '';
+  for (let k = 0; k < Math.max(attack.length, defend.length); k++) {
+    const row = document.createElement('div');
+    row.className = 'dice-row';
+    row.append(k < attack.length ? dieElement('red', attack[k]) : document.createElement('span'));
+    const vs = document.createElement('span');
+    vs.className = 'vs';
+    row.append(vs);
+    row.append(k < defend.length ? dieElement('blue', defend[k]) : document.createElement('span'));
+    rows.append(row);
+  }
+}
+
+function renderDiceChoice() {
+  const b = state.battle, max = maxAttackDice(state.provinceStates[b.fromId].soldiers);
+  b.dice = Math.max(1, Math.min(b.dice, max));
+  const capital = isCapital(b.toId), defDice = defendDiceFor(state.provinceStates[b.toId].soldiers, capital);
+  $b('dice-choice').innerHTML = [1, 2, 3].map(n =>
+    `<button type="button" data-dice="${n}" class="${n === b.dice ? 'chosen' : ''}" ${n > max ? 'disabled' : ''}
+      title="${n > max ? `Needs ${n + 1} soldiers in ${provinceName(b.fromId)}` : `Attack with ${diceText(n)}`}">${diceText(n)}</button>`).join('');
+  $b('def-dice-note').textContent = `${playerName(state.provinceStates[b.toId].owner)} defends with ${diceText(defDice)}` +
+    (capital ? ' \u00b7 capital: +1 die, +1 on each die' : '');
+  renderDiceRows(Array(b.dice).fill(0), Array(defDice).fill(0));
+}
+
+$b('dice-choice').addEventListener('click', e => {
+  const n = Number(e.target.closest('button')?.dataset.dice);
+  if (!n || !state.battle || state.battle.rolling || state.battle.result?.conquered) return;
+  state.battle.dice = n;
+  renderDiceChoice();
+});
+
+async function startBattle(fromId, toId) {
+  const gen = fx.gen;
+  state.phase = 'battle';
+  state.battle = { fromId, toId, dice: maxAttackDice(state.provinceStates[fromId].soldiers), rolls: 0, rolling: false,
+                   charging: true, losses: { att: 0, def: 0 }, summaries: [] };
+  updateTurnUI(); render();
+  await fxCharge(fromId, toId);
+  if (gen !== fx.gen || !state.battle) return;
+  state.battle.charging = false;
+  renderBattleSides();
+  renderDiceChoice();
+  $b('battle-controls').hidden = false;
+  $b('battle-result').textContent = '';
+  $b('battle-occupy').hidden = true;
+  $b('battle-retreat').hidden = false;
+  $b('battle-roll').hidden = false;
+  $b('battle-roll').disabled = false;
+  $b('battle-roll').innerHTML = '&#127922; Roll dice!';
+  $b('battle-done').hidden = true;
+  battleDialog.classList.toggle('ai', !!state.aiControlled);
+  $b('battle-ai-note').hidden = !state.aiControlled;
+  $b('battle-ai-note').textContent = `\u{1F916} ${playerName(state.currentPlayer)} (computer) is commanding this attack.`;
+  if (state.provinceStates[toId].soldiers === 0) walkover();
+  battleDialog.showModal();
+  if (state.battle.result) $b('battle-done').focus();
+  render();
+}
+
+function retreat() {
+  console.info(`[attack] ${playerName(state.currentPlayer)} called off the attack on ${provinceName(state.battle.toId)} before rolling.`);
+  state.phase = 'action';
+  state.battle = null;
+  battleDialog.close();
+  updateInfo(); render(); updateTurnUI();
+}
+
+// 1-second roll: dice tumble (CSS) while faces flicker, slowing down, then land on the real values.
+function animateRoll(result) {
+  return new Promise(resolve => {
+    renderDiceRows(result.attack.map(() => 1), result.defend.map(() => 1));
+    const dice = [...$b('dice-rows').querySelectorAll('.die')];
+    dice.forEach((d, k) => { d.style.animationDelay = `${k * 25}ms`; d.classList.add('rolling'); });
+    const t0 = performance.now(), duration = RULES.rollAnimationMs;
+    let delay = 40;
+    const flicker = () => {
+      if (performance.now() - t0 >= duration - 60) return;
+      dice.forEach(d => setDieFace(d, 1 + Math.floor(Math.random() * 6)));
+      delay *= 1.18;                               // decelerate like a die losing momentum
+      setTimeout(flicker, delay);
+    };
+    flicker();
+    setTimeout(() => {
+      renderDiceRows(result.attack, result.defend);   // final faces, sorted so rows are the comparisons
+      resolve();
+    }, duration);
+  });
+}
+
+function showRollOutcome(result) {
+  const rows = [...$b('dice-rows').children];
+  result.pairs.forEach((p, k) => {
+    const [aDie, vs, dDie] = rows[k].children;
+    const attackerWon = p.winner === 'attacker';
+    aDie.classList.add(attackerWon ? 'won' : 'lost');
+    dDie.classList.add(attackerWon ? 'lost' : 'won');
+    vs.textContent = attackerWon ? '\u25B6' : (p.a === p.d ? '=' : '\u25C0');
+    vs.title = attackerWon ? 'Attacker wins' : (p.a === p.d ? 'Tie: defender wins' : 'Defender wins');
+  });
+  rows.slice(result.pairs.length).forEach(r => r.querySelectorAll('.die').forEach(d => d.classList.add('unused')));
+}
+
+// The province is taken: choose how many soldiers march in (min..max), then "Occupy".
+function showOccupy(min, max) {
+  const b = state.battle;
+  $b('occupy-text').textContent = `Move soldiers into ${provinceName(b.toId)}` +
+    (b.rolls ? ` (at least ${min}: the dice you rolled).` : '.');
+  Object.assign($b('occupy-range'), { min, max, value: max });
+  $b('occupy-range').disabled = min === max;
+  $b('occupy-value').textContent = max;
+  $b('battle-occupy').hidden = false;
+  $b('battle-roll').hidden = true;
+  $b('battle-done').textContent = 'Occupy';
+  $b('battle-done').className = 'primary';
+  $b('battle-done').hidden = false;
+}
+
+// Undefended province (0 soldiers): no dice, no losses; the attacker goes straight to occupying it.
+function walkover() {
+  const b = state.battle, max = state.provinceStates[b.fromId].soldiers - 1;
+  b.dice = 1;                                      // occupy() needs at least 1 soldier to march in
+  b.result = { conquered: true, attackerLosses: 0, defenderLosses: 0, capital: isCapital(b.toId) };
+  b.summaries.push(`${playerName(state.currentPlayer)} found ${provinceName(b.toId)} (${playerName(ownerOf(b.toId))}) undefended: no battle was needed.`);
+  console.info(`[attack] ${b.summaries.at(-1)}`);
+  $b('battle-controls').hidden = true;
+  $b('dice-rows').innerHTML = '';
+  $b('battle-result').textContent = `${provinceName(b.toId)} is undefended and falls without a fight!`;
+  $b('battle-result').className = 'result win';
+  showOccupy(1, max);
+}
+
+// One roll per click. Unless the province falls or the attacker runs out of soldiers, the attacker
+// may roll again (any number of times) or stop. Board counts update when the dialog closes.
+async function onRoll() {
+  const b = state.battle;
+  if (!b || b.charging || b.rolling || b.result?.conquered) return;
+  b.dice = Math.min(b.dice, maxAttackDice(state.provinceStates[b.fromId].soldiers));
+  if (b.dice < 1) return;
+  b.rolling = true;
+  $b('battle-roll').disabled = true;
+  $b('battle-retreat').hidden = true;
+  $b('battle-done').hidden = true;
+  $b('dice-choice').querySelectorAll('button').forEach(btn => { btn.disabled = true; });
+  const result = rollAttack(b.fromId, b.toId, b.dice);
+  b.result = result;
+  b.rolls++;
+  b.losses.att += result.attackerLosses;
+  b.losses.def += result.defenderLosses;
+  b.summaries.push(result.summary);
+  holdSoldiers(b.fromId, result.attackerLosses);   // board shows the losses once the dialog closes
+  holdSoldiers(b.toId, result.defenderLosses);
+  await animateRoll(result);
+  if (state.battle !== b) return;                  // new game meanwhile
+  b.rolling = false;
+  showRollOutcome(result);
+  renderBattleSides();
+  updateInfo(); render();
+  const a = result.attackerLosses, d = result.defenderLosses, canRoll = maxAttackDice(state.provinceStates[b.fromId].soldiers) > 0;
+  const lossText = `Attacker loses ${a}, defender loses ${d}.`;
+  if (result.conquered) {
+    const max = state.provinceStates[b.fromId].soldiers - 1, min = Math.min(b.dice, max);
+    $b('battle-result').textContent = `${lossText} ${provinceName(b.toId)} has fallen!`;
+    $b('battle-result').className = 'result win';
+    showOccupy(min, max);
+  } else {
+    $b('battle-result').textContent = `${lossText} ${provinceName(b.toId)} holds with ${plural(state.provinceStates[b.toId].soldiers, 'soldier')}.` +
+      (canRoll ? '' : ` ${provinceName(b.fromId)} has no soldiers left to attack with.`);
+    $b('battle-result').className = 'result' + (d > a ? ' win' : a > d ? ' loss' : '');
+    $b('battle-roll').hidden = !canRoll;
+    $b('battle-roll').disabled = false;
+    $b('battle-roll').innerHTML = '&#127922; Roll again';
+    $b('battle-done').textContent = 'Stop attack';
+    $b('battle-done').className = canRoll ? '' : 'primary';
+    if (canRoll) {                                 // dice count may be changed between rolls
+      const keep = b.dice;
+      renderDiceChoice();
+      b.dice = keep;
+      renderDiceRows(result.attack, result.defend);
+      showRollOutcome(result);
+    }
+  }
+  $b('battle-done').hidden = false;
+  (canRoll && !result.conquered ? $b('battle-roll') : $b('battle-done')).focus();
+}
+
+// Closes the battle dialog, then animates: total losses ("-n") on both sides; on conquest the occupying
+// troops march in and the province changes colour on arrival. Then victory, or the turn goes on
+// (more attacks, one move, or End turn).
+async function finishBattle() {
+  const b = state.battle;
+  if (!b?.result || b.rolling || b.finishing) return;
+  b.finishing = true;
+  const gen = fx.gen, me = state.currentPlayer, r = b.result, defender = ownerOf(b.toId);
+  const count = r.conquered ? Number($b('occupy-range').value) : 0;
+  const lines = [...b.summaries];
+  battleDialog.close();
+  state.battle = null;                             // phase stays 'battle' during the animations: no input meanwhile
+  holdSoldiers(b.fromId, -b.losses.att);
+  holdSoldiers(b.toId, -b.losses.def);
+  const losses = [[b.fromId, b.losses.att], [b.toId, b.losses.def]].filter(([, n]) => n > 0)
+    .flatMap(([id, n]) => [fxFloatText(id, `\u2212${n}`, LOSS_COLOR), fxFlash(id, '#c81414')]);
+  updateInfo(); render();
+  await Promise.all(losses);
+  if (gen !== fx.gen) return;
+  if (r.conquered) {
+    holdSoldiers(b.fromId, -count);                // they leave now; the province is taken on arrival
+    await fxMarch(b.fromId, b.toId, count, me, () => {
+      holdSoldiers(b.fromId, count);
+      lines.push(occupy(b.fromId, b.toId, count, b.dice));
+      fxFlash(b.toId, playerHex(me));
+      updateInfo();
+    });
+    if (gen !== fx.gen) return;
+    if (defender !== ROGUE && state.capitals[defender] === b.toId) {
+      lines.push(eliminate(defender, `${playerName(defender)}'s capital ${provinceName(b.toId)} has fallen`));
+    } else if (defender !== ROGUE && provincesOf(defender).length === 0) {
+      lines.push(eliminate(defender, `${playerName(defender)} has lost every province`));
+    }
+  } else {
+    lines.push(`${playerName(me)} stopped the attack on ${provinceName(b.toId)} after ${plural(b.rolls, 'roll')}.`);
+  }
+  if (alivePlayers().length === 1) return declareVictory(me, lines);
+  recordTurnLog(...lines);
+  state.attacks++;
+  state.phase = 'action';
+  state.selectedId = !r.conquered && canAttackFrom(b.fromId) ? b.fromId : null;
+  console.info(`[attack] battle over after ${plural(b.rolls, 'roll')}; ${playerName(me)} continues the turn.`);
+  updateInfo(); render(); updateTurnUI();
+  if (!state.aiControlled) showHint('Attack again, move once (ends the turn) or press End turn.');
+}
+
+$b('occupy-range').addEventListener('input', e => { $b('occupy-value').textContent = e.target.value; });
+$b('battle-roll').addEventListener('click', onRoll);
+$b('battle-retreat').addEventListener('click', retreat);
+$b('battle-done').addEventListener('click', finishBattle);
+battleDialog.addEventListener('cancel', e => {      // Esc: call off before rolling; afterwards stop (or occupy)
+  e.preventDefault();
+  const b = state.battle;
+  if (!b || b.charging || b.rolling || state.aiControlled) return;
+  if (b.rolls) finishBattle(); else retreat();
+});
+
+// The player is out; every province they still hold turns rogue (grey, keeps its soldiers).
+function eliminate(player, reason) {
+  const rest = provincesOf(player);
+  rest.forEach(id => Object.assign(state.provinceStates[id], { owner: ROGUE, formerOwner: player }));
+  state.out[player] = true;
+  rest.forEach(id => fxFlash(id, ROGUE_HEX));
+  console.info(`[game] ${reason}: ${playerName(player)} is out in round ${state.round}; ${rest.length} province(s) turn rogue.`);
+  return `${reason}: ${playerName(player)} is out of the game` +
+    (rest.length ? ` and ${plural(rest.length, 'province')} turn rogue.` : '.');
+}
+
+// ---------- Victory ----------
+const victoryDialog = document.getElementById('victory-dialog');
+function declareVictory(player, lines) {
+  state.phase = 'over';
+  recordTurnLog(...lines);
+  console.info(`[game] ${playerName(player)} wins in round ${state.round}.`);
+  $b('victory-chip').style.background = playerHex(player);
+  $b('victory-name').textContent = `${playerName(player)} conquers the world!`;
+  $b('victory-text').textContent = `${lines.join(' ')} The last capital standing, round ${state.round}.`;
+  state.selectedId = null;
+  updateInfo(); render(); updateTurnUI();
+  showVictory();
+}
+// "View map" (or Esc) closes the dialog and leaves the final board to look at; the bottom-bar
+// button then reads "Results" and reopens it. Only "New game" starts over.
+function showVictory() {
+  victoryDialog.returnValue = '';
+  victoryDialog.onclose = () => {
+    if (victoryDialog.returnValue === 'new') return startNewGame();
+    console.info('[game] victory dialog hidden: observing the final map.');
+    showHint('The war is over. Press Results for the outcome or to start a new game.');
+  };
+  victoryDialog.showModal();
+}
+
+let lastClickShift = false;
+canvas.addEventListener('click', e => {
+  if (fx.lock) return;                             // an animation is finishing the turn
+  if (state.aiControlled && state.phase !== 'over')
+    return showHint(`${playerName(state.currentPlayer)} is played by the computer. Please wait for your turn.`);
+  lastClickShift = e.shiftKey;
+  handleProvinceClick(provinceAt(...eventPos(e))?.id ?? null);
+});
+
+window.addEventListener('resize', resize);
+
+// ---------- Game lifecycle ----------
+function startNewGame(seed = (Math.random() * 2 ** 32) >>> 0) {
+  const size = MAP_SIZES[settings.mapSize], count = settings.playerCount, requested = seed;
+  // Not every map can be split into equal states that all border each other (e.g. 4 players need a
+  // landlocked core, rare on small maps): generate another map until one can.
+  let owners = null;
+  for (let tries = 0; !owners; tries++) {
+    if (tries === 2000) throw new Error(`[game] no fair ${count}-player split found on ${tries} ${settings.mapSize} maps.`);
+    if (tries > 0) seed = (Math.imul(seed ^ (seed >>> 15), 0x2c1b3c6d) + tries) >>> 0;
+    world = createWorld(worldConfig(size.provinces, seed));
+    owners = partitionIntoStates(world.provinces, makeRng(seed ^ 0x9E3779B9), count);
+  }
+  if (seed !== requested) console.info(`[game] map ${requested} could not be split fairly for ${count} players; using map ${seed}.`);
+  paths = buildPaths(world);
+  tokenRadius = computeTokenRadius(world);
+  terrain = buildTerrain(world, seed);
+  Object.assign(state, { hoveredId: null, seed, currentPlayer: 0, round: 1, playerCount: count,
+                         uniforms: dealUniforms(count, makeRng(seed ^ 0x5bd1e995)),
+                         provinceStates: owners.map(owner => ({ owner, soldiers: 1 })), capitals: [], out: [] });
+  [battleDialog, troopsDialog, victoryDialog, handoffDialog].forEach(d => { if (d.open) { d.onclose = null; d.close(); } });
+  ai.token++;                                      // stops any AI turn still running from the previous game
+  fxReset();
+  state.unseenLog = [];
+  state.eventLog = [];
+  beginTurn();
+  console.info(`[game] new game: map=${settings.mapSize} provinces=${world.provinces.length} seed=${seed} ` +
+               `players=${count} split=${Array.from({ length: count }, (_, p) => owners.filter(o => o === p).length).join('/')} ` +
+               `uniforms=${state.uniforms.map(u => UNIFORMS[u].id).join(',')}`);
+  resize();
+  updateInfo();
+  updateTurnUI(true);
+  if (state.aiControlled) runAiTurn();
+}
+
+// ---------- Turns (hot seat: players share one screen and alternate) ----------
+// Phases per turn: 'capital' (first turn only: pick the capital) -> 'reinforce' (place new soldiers) -> 'action' (any number of attacks, then optionally one
+// move, which ends the turn; or End turn) -> next player.
+// 'battle' while the battle dialog is open, 'over' once someone owns every province.
+const turnToast = document.getElementById('turn-toast');
+
+function beginTurn() {
+  Object.assign(state, { placed: {}, turnLog: [], selectedId: null, battle: null, aiIntent: null, attacks: 0,
+                         aiControlled: isAi(state.currentPlayer) });
+  if (state.capitals[state.currentPlayer] == null) Object.assign(state, { phase: 'capital', reinforcementsLeft: 0 });
+  else startReinforcements();
+}
+
+// No reinforcements (only the capital is connected): straight to the action phase.
+function startReinforcements() {
+  const me = state.currentPlayer, n = reinforcementsFor(me);
+  Object.assign(state, { phase: n ? 'reinforce' : 'action', reinforcementsLeft: n });
+  if (!n) recordTurnLog(`${playerName(me)} receives no reinforcements: no province is connected to the capital.`);
+}
+
+function updateTurnUI(announce = false) {
+  updateSidebar();
+  const player = settings.players[state.currentPlayer];
+  const hex = colorHex(player.color);
+  document.documentElement.style.setProperty('--player-color', hex);
+  document.getElementById('turn-chip').style.background = hex;
+  document.getElementById('turn-player').textContent = player.name;
+  const step = fx.lock ? `${fx.lockLabel}\u2026` : {
+    capital: 'choose your capital: click one of your provinces',
+    reinforce: `place ${plural(state.reinforcementsLeft, 'reinforcement')} in provinces connected to your capital (shift+click: all)` +
+               (reinforceOnlyTurn() ? ' \u00b7 opening round: no attack or move' : ''),
+    action: state.selectedId == null ? 'attack any number of times, then move once or end turn: pick a province with soldiers'
+                                      : 'click cross-hatched targets to attack or ivory-striped targets to move (moving ends the turn)',
+    battle: 'battle!',
+    over: 'wins the war \u00b7 click provinces to inspect the final map',
+  }[state.phase];
+  document.getElementById('turn-round').textContent = `Round ${state.round} \u00b7 ${step}`;
+  const endBtn = document.getElementById('end-turn');
+  const over = state.phase === 'over';
+  endBtn.innerHTML = over ? '&#127942; Results' : 'End turn &#10148;';
+  endBtn.disabled = over ? false : state.phase !== 'action' || state.aiControlled || fx.lock > 0;
+  endBtn.title = over ? 'Show the outcome of the war' : state.aiControlled ? `${player.name} is played by the computer` :
+                 state.phase === 'capital' ? 'Choose your capital first' :
+                 state.phase === 'reinforce' ? 'Place all reinforcements first' : 'End your turn without moving';
+  document.body.classList.toggle('ai-turn', !!state.aiControlled && state.phase !== 'over');
+  if (state.aiControlled && !over) {
+    document.getElementById('turn-player').textContent = `\u{1F916} ${player.name}`;
+    document.getElementById('turn-round').textContent = `Round ${state.round} \u00b7 computer player`;
+  }
+  if (!state.aiControlled || state.phase === 'over') setAiStatus(null);
+  if (announce) showToast(`${player.name}'s turn`);
+}
+
+function showToast(text, kind = '') {
+  turnToast.textContent = text;
+  turnToast.className = kind;
+  void turnToast.offsetWidth;                    // restart the CSS animation
+  turnToast.classList.add('show');
+}
+const showHint = text => showToast(text, 'hint');
+
+// Ends the current player's turn and shows the hot-seat handoff screen for the next player.
+// AI turns skip the handoff screen; their logs pile up in state.unseenLog until a human takes over.
+function endTurn(actionSummary = null) {
+  const from = state.currentPlayer;
+  const log = [...state.turnLog];
+  if (actionSummary) log.push(actionSummary);
+  else if (!state.attacks) log.push(`${playerName(from)} took no action.`);
+  recordEvents(from, log.slice(state.turnLog.length));
+  state.unseenLog.push({ player: from, log });
+  state.currentPlayer = nextPlayer(from);
+  if (state.currentPlayer <= from) state.round++;     // wrapped around the table
+  beginTurn();
+  console.info(`[turn] ${playerName(from)} -> ${playerName(state.currentPlayer)}${state.aiControlled ? ' (AI)' : ''}, round ${state.round}`);
+  updateInfo(); render(); updateTurnUI();
+  if (state.aiControlled) {
+    showToast(`\u{1F916} ${playerName(state.currentPlayer)}'s turn`);
+    runAiTurn();
+  } else {
+    const others = state.unseenLog.filter(t => t.player !== state.currentPlayer);   // own turn needs no recap
+    showHandoff(others.length ? others : state.unseenLog.slice(-1));
+    state.unseenLog = [];
+  }
+}
+
+// Next player in seat order who is still in the game (players who lost their capital are skipped).
+function nextPlayer(from) {
+  for (let k = 1; k <= state.playerCount; k++) {
+    const p = (from + k) % state.playerCount;
+    if (!state.out[p]) return p;
+  }
+  return from;
+}
+const alivePlayers = () => Array.from({ length: state.playerCount }, (_, p) => p).filter(p => !state.out[p]);
+
+const handoffDialog = document.getElementById('handoff-dialog');
+function showHandoff(turns) {
+  const next = settings.players[state.currentPlayer];
+  document.getElementById('handoff-ended').textContent = turns.length === 1
+    ? `${playerName(turns[0].player)}'s turn is over` : 'Since your last turn';
+  document.getElementById('handoff-summary').textContent =
+    turns.map(t => (turns.length > 1 ? `\u2014 ${playerName(t.player)} \u2014\n` : '') + t.log.join('\n')).join('\n\n');
+  document.getElementById('handoff-chip').style.background = colorHex(next.color);
+  document.getElementById('handoff-next').textContent = `${next.name}, your move!`;
+  document.getElementById('handoff-reinforce').textContent = state.phase === 'capital'
+    ? 'First choose your capital among your provinces.'
+    : `You receive ${plural(state.reinforcementsLeft, 'reinforcement')} to place.`;
+  handoffDialog.onclose = () => {                    // Start turn, Enter or Esc all begin the turn
+    updateTurnUI(true);
+    aiControlChanged(state.currentPlayer);           // seat may have been switched to AI meanwhile
+  };
+  handoffDialog.showModal();
+}
+document.getElementById('end-turn').addEventListener('click', () => {
+  if (state.phase === 'over') { if (!victoryDialog.open) showVictory(); return; }
+  if (state.phase === 'action' && !state.aiControlled && !fx.lock) endTurn(); });
+
+// ---------- AI players ----------
+// The AI plays through the same actions and dialogs as a human (reinforce clicks, battle dialog with the
+// dice animation, moves), with pauses between steps so other players can follow. A status badge next
+// to the player name says what it is doing. ai.token changes on new game -> stale AI turns stop.
+const AI_DELAYS = { think: 900, place: 380, placeTotal: 2600, plan: 1000, replan: 600, aim: 1000, dice: 700, result: 1200, occupy: 900, move: 400 };
+const AI_MAX_BATTLES = 12;                         // per turn: keeps very long AI turns watchable
+const ai = { token: 0, speed: 1 };                 // speed 0 = no pauses (tests)
+const isAi = player => !!settings.players[player]?.ai;
+
+function setAiStatus(text) {
+  const el = document.getElementById('ai-status');
+  el.hidden = !text;
+  document.getElementById('ai-status-text').textContent = text ? ` ${text}` : '';
+}
+
+// Resolves after ms (scaled by ai.speed). Waits while Settings is open. Rejects if this AI turn is stale.
+function aiPause(ms, token) {
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      if (token !== ai.token || state.phase === 'over') return reject(new Error('stale'));
+      if (settingsDialog.open || confirmDialog.open) return setTimeout(check, 200);
+      resolve();
+    };
+    setTimeout(check, ms * ai.speed);
+  });
+}
+
+const enemyNeighbours = id => world.provinces[id].neighbours.filter(n => ownerOf(n) !== ownerOf(id));
+const soldiersAt = id => state.provinceStates[id].soldiers;
+
+// Steps (borders crossed) from each province to the nearest province not owned by `player`.
+function distanceToFront(player) {
+  const dist = new Array(world.provinces.length).fill(Infinity), queue = [];
+  world.provinces.forEach(p => { if (ownerOf(p.id) === player && enemyNeighbours(p.id).length) { dist[p.id] = 0; queue.push(p.id); } });
+  while (queue.length) {
+    const id = queue.shift();
+    world.provinces[id].neighbours.forEach(n => {
+      if (ownerOf(n) === player && dist[n] === Infinity) { dist[n] = dist[id] + 1; queue.push(n); }
+    });
+  }
+  return dist;
+}
+
+const aiAttackScore = (attackers, to) => {
+  const defenders = soldiersAt(to), lastOne = provincesOf(ownerOf(to)).length === 1 ? 3 : 0;
+  return Math.min(attackers / defenders, 4) * 2 - defenders + lastOne + Math.random() * 0.3;
+};
+
+// Best attack for the current player: weak targets that can fall soon are worth far more than a slugging
+// match with a big stack; finishing off a player gets a bonus.
+// extra[provinceId] = soldiers to pretend are there (used when deciding where reinforcements go).
+function aiBestAttack(extra = {}) {
+  const me = state.currentPlayer;
+  let best = null;
+  provincesOf(me).forEach(from => {
+    const attackers = soldiersAt(from) + (extra[from] || 0) - 1;
+    if (attackers < 1) return;
+    enemyNeighbours(from).forEach(to => {
+      const score = aiAttackScore(attackers, to);
+      if (!best || score > best.score) best = { from, to, score, attackers, defenders: soldiersAt(to) };
+    });
+  });
+  return best;
+}
+
+// Reinforce the border province that gives the best attack next (pretending all reinforcements land there).
+function aiChooseReinforcementTarget() {
+  const me = state.currentPlayer, r = state.reinforcementsLeft;
+  let bestId = null, bestScore = -Infinity;
+  const connected = connectedToCapital(me);
+  provincesOf(me).filter(id => enemyNeighbours(id).length && connected.has(id)).forEach(id => {
+    const opt = aiBestAttack({ [id]: r });
+    const score = opt && opt.from === id ? opt.score : -Infinity;
+    if (score > bestScore) { bestScore = score; bestId = id; }
+  });
+  return bestId ?? state.capitals[me];
+}
+
+// Capital: the own province farthest from any enemy border.
+function aiChooseCapital() {
+  const me = state.currentPlayer, dist = distanceToFront(me);
+  return provincesOf(me).reduce((best, id) => (dist[id] > dist[best] ? id : best));
+}
+
+// Attack only with a clear edge (Risk odds favour big stacks); otherwise move reserves to the front,
+// preferring the border province that faces the weakest enemy.
+function aiChooseAction() {
+  const best = aiBestAttack();
+  if (best && best.attackers >= 2 && best.attackers > best.defenders) return { kind: 'attack', ...best };
+  const me = state.currentPlayer, dist = distanceToFront(me);
+  const movers = provincesOf(me).filter(id => dist[id] > 0 && dist[id] < Infinity && soldiersAt(id) >= 2)
+    .sort((a, b) => soldiersAt(b) - soldiersAt(a));
+  const weakestEnemy = id => Math.min(...enemyNeighbours(id).map(soldiersAt), Infinity);
+  for (const from of movers) {
+    const to = moveTargets(from).filter(n => dist[n] < dist[from])
+      .sort((a, b) => dist[a] - dist[b] || weakestEnemy(a) - weakestEnemy(b))[0];
+    if (to != null) return { kind: 'move', from, to, count: soldiersAt(from) - 1 };
+  }
+  // Front-line stack facing a strong enemy: shift it along the border towards a weaker one.
+  if (best && best.attackers >= 2) {
+    const from = best.from, here = weakestEnemy(from);
+    const to = moveTargets(from).filter(n => enemyNeighbours(n).length && weakestEnemy(n) < here)
+      .sort((a, b) => weakestEnemy(a) - weakestEnemy(b))[0];
+    if (to != null) return { kind: 'move', from, to, count: soldiersAt(from) - 1 };
+  }
+  return { kind: 'pass' };
+}
+
+// Turn without reinforcements or without attacks: build a strike force for later. Moves a whole
+// neighbouring army (its province may be left empty) onto the front province with the best future attack.
+// The capital keeps 1 soldier: an empty capital falls to a single roll and knocks the player out.
+function aiChooseConcentration() {
+  const me = state.currentPlayer, cap = state.capitals[me];
+  let best = null;
+  provincesOf(me).forEach(from => {
+    const count = soldiersAt(from) - (from === cap ? 1 : 0);
+    if (count < 1) return;
+    moveTargets(from).filter(to => enemyNeighbours(to).length).forEach(to => {
+      const stack = soldiersAt(to) + count - 1;
+      const score = Math.max(...enemyNeighbours(to).map(e => aiAttackScore(stack, e))) + count * 0.01;
+      if (!best || score > best.score) best = { kind: 'move', from, to, count, score, concentrate: true };
+    });
+  });
+  return best;
+}
+
+// Highlights the source and draws the intent arrow for a moment before acting.
+async function aiShowIntent(action, status, token) {
+  state.selectedId = action.from;
+  state.aiIntent = { fromId: action.from, toId: action.to, kind: action.kind };
+  setAiStatus(status);
+  render(); updateInfo();
+  await aiPause(AI_DELAYS.aim, token);
+  state.aiIntent = null;
+}
+
+// Keep rolling while the attackers are not outnumbered (Risk odds favour the bigger stack).
+const aiKeepRolling = (fromId, toId) => soldiersAt(fromId) - 1 >= 2 && soldiersAt(fromId) - 1 >= soldiersAt(toId);
+
+// One battle through the real dialog: max dice, roll until conquered or odds turn, then occupy or stop.
+async function aiFightBattle(action, token) {
+  setAiStatus(`attacking ${provinceName(action.to)}`);
+  await startBattle(action.from, action.to);
+  await aiPause(AI_DELAYS.dice, token);
+  while (!state.battle?.result?.conquered) {
+    setAiStatus('rolling the dice');
+    await onRoll();
+    if (token !== ai.token || !state.battle) return;
+    await aiPause(AI_DELAYS.result, token);
+    if (state.battle.result.conquered || !aiKeepRolling(action.from, action.to)) break;
+    state.battle.dice = maxAttackDice(soldiersAt(action.from));
+  }
+  const b = state.battle;
+  if (b.result.conquered) {
+    // Keep a garrison if the source still faces other enemies; otherwise move everyone in.
+    const range = $b('occupy-range'), min = Number(range.min), max = Number(range.max);
+    const others = enemyNeighbours(b.fromId).filter(n => n !== b.toId).length;
+    const count = others ? Math.max(min, Math.ceil(max / 2)) : max;
+    range.value = count;
+    $b('occupy-value').textContent = count;
+    setAiStatus(`occupying ${provinceName(b.toId)}`);
+    await aiPause(AI_DELAYS.occupy, token);
+  }
+  await finishBattle();
+}
+
+async function runAiTurn() {
+  const token = ai.token, me = state.currentPlayer, name = playerName(me);
+  const stale = () => token !== ai.token || state.currentPlayer !== me;
+  try {
+    setAiStatus('thinking');
+    await aiPause(AI_DELAYS.think, token);
+    if (state.phase === 'capital') {
+      const capital = aiChooseCapital();
+      setAiStatus(`founding the capital in ${provinceName(capital)}`);
+      chooseCapital(capital);
+      updateInfo(); render(); updateTurnUI();
+      await aiPause(AI_DELAYS.plan, token);
+    }
+    // 1) Reinforcements, placed one by one so the counter visibly climbs.
+    const target = state.phase === 'reinforce' ? aiChooseReinforcementTarget() : state.capitals[me], total = state.reinforcementsLeft;
+    setAiStatus(`reinforcing ${provinceName(target)}`);
+    state.selectedId = target;
+    while (state.phase === 'reinforce') {
+      await aiPause(Math.min(AI_DELAYS.place, AI_DELAYS.placeTotal / total), token);
+      placeReinforcement(target, 1);
+      updateInfo(); render(); updateTurnUI(); setAiStatus(`reinforcing ${provinceName(target)}`);
+    }
+    state.selectedId = null;
+    console.info(`[ai] ${name} placed ${total} reinforcements in ${provinceName(target)}.`);
+    if (endOpeningTurn()) return;
+    // 2) Attacks: as long as a promising target exists (each battle costs soldiers, so this ends).
+    setAiStatus('planning');
+    await aiPause(AI_DELAYS.plan, token);
+    let action = aiChooseAction();
+    for (let battles = 0; action.kind === 'attack' && battles < AI_MAX_BATTLES; battles++) {
+      console.info(`[ai] ${name} attacks ${provinceName(action.to)} from ${provinceName(action.from)} (${action.attackers} vs ${action.defenders}).`);
+      await aiShowIntent(action, `aiming at ${provinceName(action.to)}`, token);
+      await aiFightBattle(action, token);
+      if (stale() || state.phase !== 'action') return;
+      setAiStatus('planning');
+      await aiPause(AI_DELAYS.replan, token);
+      action = aiChooseAction();
+    }
+    // 3) Optional move (ends the turn), otherwise end the turn. A quiet turn gathers the army instead.
+    if (!total || !state.attacks) action = aiChooseConcentration() ?? action;
+    console.info(`[ai] ${name} ends with: ${action.kind === 'move' ? `move ${provinceName(action.from)} -> ${provinceName(action.to)}` : 'no move'}`);
+    if (action.kind !== 'move') {
+      setAiStatus(state.attacks ? 'ending the turn' : 'holding position');
+      await aiPause(AI_DELAYS.aim, token);
+      return endTurn(state.attacks ? null : `${name} held position.`);
+    }
+    await aiShowIntent(action, action.concentrate ? `massing troops in ${provinceName(action.to)}` : `marching to ${provinceName(action.to)}`, token);
+    const summary = moveSoldiers(action.from, action.to, action.count);
+    state.selectedId = null;
+    updateInfo(); render();
+    await marchTroops(action.from, action.to, action.count);
+    await aiPause(AI_DELAYS.move, token);
+    return endTurn(summary);
+  } catch (err) {
+    if (err.message !== 'stale') { console.error(`[ai] ${name}'s turn failed:`, err); setAiStatus(null); }
+  }
+}
+
+// Settings toggled the AI flag. A human seat switched to AI hands over at once (unless a dialog is
+// mid-action); an AI seat switched to human finishes its current turn first.
+function aiControlChanged(player) {
+  updateTurnUI();
+  if (player !== state.currentPlayer || state.aiControlled || !isAi(player)) return;
+  if (!['reinforce', 'action'].includes(state.phase) || troopsDialog.open || handoffDialog.open || fx.lock) return;
+  state.aiControlled = true;
+  state.selectedId = null;
+  updateTurnUI(); render();
+  runAiTurn();
+}
+
+// ---------- Settings ----------
+const SETTINGS_KEY = 'conquest.settings.v1';
+
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+    const merged = { ...structuredClone(DEFAULT_SETTINGS), ...saved };
+    if (!MAP_SIZES[merged.mapSize]) merged.mapSize = DEFAULT_SETTINGS.mapSize;
+    if (!PLAYER_COUNTS.includes(merged.playerCount)) merged.playerCount = DEFAULT_SETTINGS.playerCount;
+    // Players: fall back per field, then enforce the "all active players have different colours" invariant.
+    merged.players = DEFAULT_SETTINGS.players.map((def, i) => {
+      const p = Array.isArray(saved.players) ? saved.players[i] || {} : {};
+      const name = typeof p.name === 'string' && p.name.trim() ? p.name.trim().slice(0, PLAYER_NAME_MAX) : def.name;
+      const color = PLAYER_COLORS.some(c => c.id === p.color) ? p.color : def.color;
+      const country = p.country === RANDOM_COUNTRY || UNIFORMS.some(u => u.id === p.country) ? p.country : RANDOM_COUNTRY;
+      return { name, color, ai: p.ai === true, country };
+    });
+    repairColors(merged);
+    repairCountries(merged);
+    return merged;
+  } catch (err) {
+    console.warn('[settings] could not read saved settings, using defaults:', err);
+    return structuredClone(DEFAULT_SETTINGS);
+  }
+}
+
+// Any active player whose colour is already used by an earlier active player gets the first free colour.
+function repairColors(s) {
+  const used = new Set();
+  s.players.slice(0, s.playerCount).forEach((p, i) => {
+    if (used.has(p.color)) {
+      const free = PLAYER_COLORS.find(c => !used.has(c.id) && !s.players.slice(i + 1, s.playerCount).some(q => q.color === c.id));
+      console.warn(`[settings] ${p.name} shared colour ${p.color}; reassigned to ${free.id}.`);
+      p.color = free.id;
+    }
+    used.add(p.color);
+  });
+}
+
+// Two active players cannot pick the same nation: the later one goes back to random.
+function repairCountries(s) {
+  const used = new Set();
+  s.players.slice(0, s.playerCount).forEach(p => {
+    if (p.country === RANDOM_COUNTRY) return;
+    if (used.has(p.country)) {
+      console.warn(`[settings] ${p.name} shared nation ${p.country}; switched to random.`);
+      p.country = RANDOM_COUNTRY;
+    } else used.add(p.country);
+  });
+}
+
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); }
+  catch (err) { console.warn('[settings] could not persist settings:', err); }
+}
+
+const settings = loadSettings();
+const settingsDialog = document.getElementById('settings-dialog');
+const confirmDialog = document.getElementById('confirm-dialog');
+const mapSizeOptions = document.getElementById('map-size-options');
+
+mapSizeOptions.innerHTML = Object.entries(MAP_SIZES).map(([key, s]) =>
+  `<label class="option"><input type="radio" name="mapSize" value="${key}">` +
+  `<span class="option-title">${s.label}</span><span class="option-sub">${s.provinces} provinces</span></label>`).join('');
+
+const playerCountOptions = document.getElementById('player-count-options');
+playerCountOptions.innerHTML = PLAYER_COUNTS.map(n =>
+  `<label class="option"><input type="radio" name="playerCount" value="${n}">` +
+  `<span class="option-title">${n} players</span><span class="option-sub">hot seat</span></label>`).join('');
+
+const playerSettings = document.getElementById('player-settings');
+playerSettings.innerHTML = settings.players.map((p, i) => `
+  <div class="player-row" data-player="${i}">
+    <label for="player-name-${i}">Player ${i + 1}</label>
+    <div class="name-line">
+      <input type="text" id="player-name-${i}" data-player="${i}" maxlength="${PLAYER_NAME_MAX}" autocomplete="off">
+      <label class="ai-toggle" title="Let the computer play this player"><input type="checkbox" id="player-ai-${i}" data-player="${i}" data-ai> AI</label>
+    </div>
+    <canvas class="uniform-icon" data-player="${i}" width="104" height="104" aria-hidden="true"></canvas>
+    <span class="uniform-label" data-player="${i}"></span>
+    <div class="swatches" role="radiogroup" aria-label="Player ${i + 1} colour">${PLAYER_COLORS.map(c => `
+      <label class="swatch" title="${c.label}"><input type="radio" name="player-color-${i}" data-player="${i}"
+        value="${c.id}" aria-label="${c.label}"><span class="chip" style="background:${c.hex}"></span></label>`).join('')}
+    </div>
+    <div class="swatches countries" role="radiogroup" aria-label="Player ${i + 1} nation">
+      <label class="swatch" title="Random nation"><input type="radio" name="player-country-${i}" data-player="${i}" data-country
+        value="${RANDOM_COUNTRY}" aria-label="Random nation"><span class="chip random-chip">&#127922;</span></label>${UNIFORMS.map(u => `
+      <label class="swatch" title="${u.country}"><input type="radio" name="player-country-${i}" data-player="${i}" data-country
+        value="${u.id}" aria-label="${u.country}"><canvas class="chip flag-chip" data-flag="${u.id}" width="60" height="40"></canvas></label>`).join('')}
+    </div>
+  </div>`).join('');
+playerSettings.querySelectorAll('canvas[data-flag]').forEach(c =>
+  paintFlag(c.getContext('2d'), UNIFORMS.find(u => u.id === c.dataset.flag), c.width, c.height));
+
+// Shows each seat's uniform in the current game (seats not in the game have none yet).
+function paintUniformPreviews() {
+  playerSettings.querySelectorAll('.uniform-icon').forEach(c => {
+    const i = Number(c.dataset.player), g = c.getContext('2d');
+    g.clearRect(0, 0, c.width, c.height);
+    if (i < state.playerCount) paintSoldier(g, uniformFor(i));
+  });
+  playerSettings.querySelectorAll('.uniform-label').forEach(el => {
+    const i = Number(el.dataset.player);
+    const u = uniformFor(i);
+    el.textContent = i < state.playerCount ? `${u.country}: ${u.label}, capital: ${u.landmark}` : 'nation set in the next game';
+  });
+}
+
+function syncSettingsForm() {
+  mapSizeOptions.querySelector(`input[value="${settings.mapSize}"]`).checked = true;
+  playerCountOptions.querySelector(`input[value="${settings.playerCount}"]`).checked = true;
+  syncPlayerForm();
+  paintUniformPreviews();
+}
+
+// Index of another active player using this colour, or -1.
+const colorOwner = (color, except) =>
+  settings.players.findIndex((p, j) => j !== except && j < settings.playerCount && p.color === color);
+const countryOwner = (country, except) =>
+  settings.players.findIndex((p, j) => j !== except && j < settings.playerCount && p.country === country);
+// A colour picked by one active player is disabled for the others: identical colours are impossible.
+function syncPlayerForm({ keepNames = false } = {}) {
+  const count = settings.playerCount;
+  settings.players.forEach((p, i) => {
+    playerSettings.querySelector(`.player-row[data-player="${i}"]`).hidden = i >= count;
+    if (!keepNames) document.getElementById(`player-name-${i}`).value = p.name;
+    document.getElementById(`player-ai-${i}`).checked = p.ai;
+    playerSettings.querySelectorAll(`input[name="player-color-${i}"]`).forEach(r => {
+      const owner = colorOwner(r.value, i);
+      const label = PLAYER_COLORS.find(c => c.id === r.value).label;
+      r.checked = r.value === p.color;
+      r.disabled = owner !== -1;
+      r.parentElement.title = r.disabled ? `${label} (taken by ${settings.players[owner].name})` : label;
+    });
+    playerSettings.querySelectorAll(`input[name="player-country-${i}"]`).forEach(r => {
+      const owner = r.value === RANDOM_COUNTRY ? -1 : countryOwner(r.value, i);
+      const label = r.value === RANDOM_COUNTRY ? 'Random nation' : UNIFORMS.find(u => u.id === r.value).country;
+      r.checked = r.value === p.country;
+      r.disabled = owner !== -1;
+      r.parentElement.title = r.disabled ? `${label} (taken by ${settings.players[owner].name})` : label;
+    });
+  });
+}
+
+// Player names and colours are cosmetic: applied immediately, no new game needed.
+playerSettings.addEventListener('input', e => {
+  const i = Number(e.target.dataset.player);
+  if (e.target.type === 'checkbox') {
+    settings.players[i].ai = e.target.checked;
+    console.info(`[settings] ${settings.players[i].name} is now ${e.target.checked ? 'AI' : 'human'} controlled.`);
+    saveSettings();
+    return aiControlChanged(i);
+  } else if (e.target.type === 'text') {
+    settings.players[i].name = e.target.value.trim().slice(0, PLAYER_NAME_MAX) || `Player ${i + 1}`;
+  } else if (e.target.type === 'radio' && 'country' in e.target.dataset) {
+    if (e.target.value !== RANDOM_COUNTRY && countryOwner(e.target.value, i) !== -1) {   // defensive: UI disables this already
+      console.warn(`[settings] nation ${e.target.value} is taken by another player; ignored.`);
+      return syncPlayerForm({ keepNames: true });
+    }
+    settings.players[i].country = e.target.value;
+    if (i < state.playerCount) {                    // applies to the running game at once: uniforms, landmarks, flags
+      state.uniforms = dealUniforms(state.playerCount, Math.random, state.uniforms);
+      console.info(`[settings] ${settings.players[i].name} chose ${e.target.value}; nations now ${state.uniforms.map(u => UNIFORMS[u].id).join(',')}.`);
+    }
+    paintUniformPreviews();
+  } else if (e.target.type === 'radio') {
+    if (colorOwner(e.target.value, i) !== -1) {               // defensive: UI disables this already
+      console.warn(`[settings] colour ${e.target.value} is taken by another player; ignored.`);
+      return syncPlayerForm({ keepNames: true });
+    }
+    settings.players[i].color = e.target.value;
+  }
+  saveSettings();
+  syncPlayerForm({ keepNames: true });
+  updateTurnUI();
+  updateInfo(); render();                           // provinces are painted in player colours
+});
+playerSettings.addEventListener('change', e => {      // on blur: show the normalised name (e.g. default if empty)
+  if (e.target.type === 'text') e.target.value = settings.players[Number(e.target.dataset.player)].name;
+});
+// Enter in a name field would submit the dialog form (and close it); just commit the field instead.
+playerSettings.addEventListener('keydown', e => {
+  if (e.key === 'Enter' && e.target.type === 'text') { e.preventDefault(); e.target.blur(); }
+});
+
+// Starting a new game always asks first: the current game is lost. onConfirm runs before the new game starts.
+function confirmNewGame(text, onConfirm = () => {}) {
+  document.getElementById('confirm-text').textContent = `${text} The current game will be lost.`;
+  confirmDialog.returnValue = '';
+  confirmDialog.onclose = () => {
+    if (confirmDialog.returnValue === 'confirm') {
+      onConfirm();
+      settingsDialog.close();
+      startNewGame();
+    } else {
+      syncSettingsForm();                       // revert e.g. the map-size radio to the active setting
+    }
+  };
+  confirmDialog.showModal();
+}
+
+// Each setting change asks for confirmation, because applying it starts a new game.
+function requestSettingChange(key, value, description) {
+  confirmNewGame(`Changing ${description} starts a new game.`, () => { settings[key] = value; saveSettings(); });
+}
+
+document.getElementById('new-game-button').addEventListener('click', () =>
+  confirmNewGame(`Start a new game on a fresh ${MAP_SIZES[settings.mapSize].label.toLowerCase()} map?`));
+
+playerCountOptions.addEventListener('change', e => {
+  const value = Number(e.target.value);
+  if (value !== settings.playerCount)
+    confirmNewGame(`Changing the number of players to ${value} starts a new game.`, () => {
+      settings.playerCount = value;
+      repairColors(settings);                   // newly seated players may share a colour with someone
+      repairCountries(settings);
+      saveSettings();
+    });
+});
+
+mapSizeOptions.addEventListener('change', e => {
+  const value = e.target.value;
+  if (value !== settings.mapSize)
+    requestSettingChange('mapSize', value, `the map size to ${MAP_SIZES[value].label} (${MAP_SIZES[value].provinces} provinces)`);
+});
+document.getElementById('settings-button').addEventListener('click', () => { syncSettingsForm(); settingsDialog.showModal(); });
+
+startNewGame();
+
+// Exposed for debugging / automated checks.
+window.Game = { ai, fx, get terrain() { return terrain; }, runAiTurn, startBattle, onRoll, finishBattle, aiChooseAction, aiChooseConcentration, aiFightBattle, get world() { return world; }, state, settings, startNewGame, endTurn, provinceAt, handleProvinceClick, moveSoldiers, UNIFORMS, paintSoldier, RULES,
+                resolveDice, rollAttack, occupy, placeReinforcement, chooseCapital, connectedToCapital, isCapital, ROGUE, moveTargets, attackTargets, reinforcementsFor,
+                setDiceRng: fn => { diceRng = fn; }, PLAYER_COLORS, RANDOM_COUNTRY,
+                createWorld, worldConfig, partitionIntoStates, isConnected, MAP_SIZES, generateUniqueNames, makeRng, REAL_NAMES };
+</script>
+</body>
+</html>
