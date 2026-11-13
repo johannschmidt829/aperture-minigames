@@ -97,16 +97,20 @@
   var W = canvas.width, H = canvas.height;
   var scoreEl = document.getElementById('score');
 
-  var GRAV = 0.72;
+  var GRAV = 0.70;
   var MAXFALL = 15;
   var MOVE = 0.95;
   var FRICTION = 0.80;
   var MAXSPEED = 5.2;
-  var JUMP = -13.2;
+  var JUMP = -15.4;
 
   var player, plats, stars, score, win, t, camX;
 
   var keys = { left: false, right: false, jump: false };
+  var jumpBuf = 0;
+  var jumpWasDown = false;
+  var jumpCutDone = false;
+  var coyote = 0;
 
   function makeLevel() {
     plats = [
@@ -135,6 +139,10 @@
     win = false;
     t = 0;
     camX = 0;
+    jumpBuf = 0;
+    jumpWasDown = false;
+    jumpCutDone = false;
+    coyote = 0;
     updateScore();
   }
 
@@ -240,6 +248,13 @@
     player.vy += GRAV;
     if (player.vy > MAXFALL) player.vy = MAXFALL;
 
+    // jump intent: edge-triggered, buffered, with coyote time
+    var jumpDown = !!keys.jump;
+    if (jumpDown && !jumpWasDown) jumpBuf = 8;
+    jumpWasDown = jumpDown;
+    if (jumpBuf > 0) jumpBuf--;
+    if (player.onGround) coyote = 6; else if (coyote > 0) coyote--;
+
     // horizontal
     player.x += player.vx;
     for (var i = 0; i < plats.length; i++) {
@@ -268,13 +283,19 @@
       }
     }
 
-    if (keys.jump && player.onGround) {
+    if (jumpBuf > 0 && (player.onGround || coyote > 0)) {
       player.vy = JUMP;
       player.onGround = false;
-      keys.jump = false; // требует повторного нажатия
+      coyote = 0;
+      jumpBuf = 0;
+      jumpCutDone = false;
     }
-    // shorter hop if jump released while rising
-    if (!keys.jump && player.vy < -6) player.vy *= 0.92;
+    // variable jump height: cut once when the button is released while rising
+    if (!jumpDown && player.vy < -4 && !jumpCutDone) {
+      player.vy *= 0.55;
+      jumpCutDone = true;
+    }
+    if (player.onGround) jumpCutDone = false;
 
     // world bounds
     if (player.x < -30) { player.x = -30; player.vx = 0; }
