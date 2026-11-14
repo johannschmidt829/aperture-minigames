@@ -116,6 +116,8 @@
   } catch (e) {}
 
   var player, plats, stars, score, win, t, camX;
+  var theme;
+  var levelType = 0;
 
   var keys = { left: false, right: false, jump: false };
   var jumpBuf = 0;
@@ -157,55 +159,93 @@
     };
   }
 
+  var THEMES = [
+    { name: 'Ночной замок', sky: ['#241f4d', '#1b1838', '#120f26'], plat: ['#6b5a2e', '#4a3d1e', '#2a2212'], edge: 'rgba(255,220,140,.35)', star: '#ffd75a', glow: 'rgba(255,215,90,.9)', sil: 'rgba(10,8,24,.85)', moon: 'rgba(255,246,214,.9)', accent: '#ffe9a8' },
+    { name: 'Рассвет', sky: ['#4a2246', '#2e1836', '#1a0f22'], plat: ['#7a4a3a', '#543026', '#2e1a14'], edge: 'rgba(255,180,140,.40)', star: '#ffd06a', glow: 'rgba(255,190,120,.9)', sil: 'rgba(28,10,26,.85)', moon: 'rgba(255,190,150,.9)', accent: '#ffd9b0' },
+    { name: 'Запретный лес', sky: ['#14302a', '#0f241f', '#08160f'], plat: ['#3f5a2e', '#2c4020', '#172614'], edge: 'rgba(180,255,150,.30)', star: '#c8ff8a', glow: 'rgba(170,255,140,.9)', sil: 'rgba(6,20,12,.85)', moon: 'rgba(200,255,190,.85)', accent: '#d9ffc0' },
+    { name: 'Ледяные залы', sky: ['#1a3a52', '#12283a', '#0a1826'], plat: ['#4a6b7a', '#334c59', '#1c2b33'], edge: 'rgba(180,230,255,.45)', star: '#b8f0ff', glow: 'rgba(160,230,255,.9)', sil: 'rgba(8,20,30,.85)', moon: 'rgba(220,245,255,.9)', accent: '#d6f4ff' },
+    { name: 'Багровый зал', sky: ['#3a1020', '#260a16', '#16050c'], plat: ['#7a2a2e', '#54201f', '#2c1010'], edge: 'rgba(255,150,140,.40)', star: '#ffb46a', glow: 'rgba(255,150,110,.9)', sil: 'rgba(24,4,10,.85)', moon: 'rgba(255,170,150,.85)', accent: '#ffd0c0' },
+    { name: 'Пустыня', sky: ['#4a3520', '#332314', '#1e1409'], plat: ['#8a6b3a', '#63492a', '#3a2a16'], edge: 'rgba(255,225,150,.45)', star: '#ffe08a', glow: 'rgba(255,215,130,.9)', sil: 'rgba(26,16,6,.85)', moon: 'rgba(255,235,190,.9)', accent: '#ffeec2' },
+    { name: 'Аметистовые своды', sky: ['#2e1a4a', '#20102f', '#120a1a'], plat: ['#5a3a7a', '#402a56', '#24162e'], edge: 'rgba(220,170,255,.40)', star: '#e2aaff', glow: 'rgba(210,160,255,.9)', sil: 'rgba(14,6,22,.85)', moon: 'rgba(235,210,255,.9)', accent: '#f0dcff' },
+    { name: 'Глубина', sky: ['#0f2e33', '#0a1f24', '#061214'], plat: ['#2e5a5a', '#204040', '#122626'], edge: 'rgba(140,255,240,.35)', star: '#7ff5e0', glow: 'rgba(120,240,220,.9)', sil: 'rgba(4,14,16,.85)', moon: 'rgba(190,255,245,.85)', accent: '#c8fff6' }
+  ];
+
+  var PATTERN_NAMES = ['Лестница', 'Башни', 'Острова', 'Зигзаг', 'Колодец', 'Камни', 'Спираль', 'Пещеры'];
+  var W_BY_TYPE = [120, 96, 118, 104, 108, 62, 98, 88];
+
+  function pathFor(type, n, rnd) {
+    var pts = [], x = 90, y = 322;
+    for (var i = 0; i < n; i++) {
+      pts.push({ x: Math.round(x), y: Math.round(y) });
+      var dx, dy;
+      switch (type) {
+        case 0: dx = 165; dy = -52; break;
+        case 1: dx = 148; dy = (i % 3 === 0) ? -96 : 30; break;
+        case 2: dx = 176; dy = (i % 2) ? 20 : -20; break;
+        case 3: dx = 170; dy = (i % 2) ? -80 : 46; break;
+        case 4: dx = 152; dy = (i < n / 2) ? 64 : -64; break;
+        case 5: dx = 116; dy = Math.round(rnd() * 40 - 20); break;
+        case 6: dx = (i % 4 < 2) ? 150 : 72; dy = -58; break;
+        default: dx = 146; dy = (i % 2) ? -72 : 2; break;
+      }
+      x += dx; y += dy;
+      if (y < 84) y = 84;
+      if (y > 352) y = 352;
+    }
+    return pts;
+  }
+
   function generatedLayout(lvl) {
     var rnd = seededRand(lvl * 999983 + 7);
+    var type = (lvl - 2) % 8;
     var world = 940 + Math.min((lvl - 1) * 4, 560);
-    var gapW = Math.min(50 + lvl * 0.5, 135);
-    // ground: 3 pieces with 2 jumpable gaps
-    var g1w = Math.floor(world * 0.36), g2w = Math.floor(world * 0.30);
-    var g1 = { x: -40, y: 400, w: g1w, h: 60 };
-    var g2 = { x: g1.x + g1.w + gapW, y: 400, w: g2w, h: 60 };
-    var g3 = { x: g2.x + g2.w + gapW, y: 400, w: Math.max(120, world + 40 - (g2.x + g2.w + gapW)), h: 60 };
-    var platsArr = [g1, g2, g3];
-    var nPlats = 7 + Math.min(Math.floor(lvl / 25), 3);
-    var baseW = Math.max(130 - lvl * 0.3, 68);
-    var stepX = (world - 220) / nPlats;
-    var jitter = Math.min(10 + lvl * 0.15, 38);
+    var n = 8 + Math.min(Math.floor(lvl / 30), 4);
+    if (type === 5) n += 4;
+    var pts = pathFor(type, n, rnd);
+    var baseW = Math.max(W_BY_TYPE[type] - Math.floor(lvl / 40) * 8, 54);
     var floaters = [];
-    for (var i = 0; i < nPlats; i++) {
-      var pw = Math.max(Math.round(baseW - rnd() * 18), 62);
-      var px = Math.round(90 + i * stepX + (rnd() - 0.5) * jitter * 2);
-      if (px < 20) px = 20;
-      if (px + pw > world - 20) px = world - 20 - pw;
-      var py = Math.round(322 - i * (222 / nPlats) + (rnd() - 0.5) * jitter);
-      if (py < 78) py = 78;
-      if (py > 335) py = 335;
-      floaters.push({ x: px, y: py, w: pw, h: 18 });
+    for (var i = 0; i < pts.length; i++) {
+      var pw = Math.max(Math.round(baseW - rnd() * 14), 50);
+      var px = pts[i].x;
+      if (px < 24) px = 24;
+      if (px + pw > world - 24) px = world - 24 - pw;
+      floaters.push({ x: px, y: pts[i].y, w: pw, h: 18 });
     }
-    // clamp consecutive gaps so every jump stays makable (<=190px center-to-center)
+    // keep every jump makable: <=190px sideways, <=110px upward
     for (var c = 1; c < floaters.length; c++) {
       var pa = floaters[c - 1], pb = floaters[c];
       var ca = pa.x + pa.w / 2, cb = pb.x + pb.w / 2;
       if (cb - ca > 190) {
         pb.x = Math.round(ca + 190 - pb.w / 2);
-        if (pb.x + pb.w > world - 20) pb.x = world - 20 - pb.w;
+        if (pb.x + pb.w > world - 24) pb.x = world - 24 - pb.w;
       } else if (ca - cb > 190) {
         pb.x = Math.round(ca - 190 - pb.w / 2);
-        if (pb.x < 20) pb.x = 20;
+        if (pb.x < 24) pb.x = 24;
       }
       var va = pa.y - pb.y;
       if (va > 110) pb.y = pa.y - 110;
       if (va < -110) pb.y = pa.y + 110;
     }
+    var gapW = Math.min(58 + lvl * 0.4, 132);
+    var g1 = { x: -40, y: 400, w: 210, h: 60 };
+    var g2 = { x: Math.round(world * 0.45), y: 400, w: 190, h: 60 };
+    var g3 = { x: world - 250, y: 400, w: 290, h: 60 };
+    var platsArr = [g1, g2, g3];
     for (var k = 0; k < floaters.length; k++) platsArr.push(floaters[k]);
-    // 5 stars spread over floating platforms
+
     var starsArr = [];
     for (var s = 0; s < 5; s++) {
-      var idx = Math.floor(s * (floaters.length - 1) / 4);
+      var idx = Math.min(floaters.length - 1, Math.floor(s * (floaters.length - 1) / 4));
       var fp = floaters[idx];
       starsArr.push({ x: Math.round(fp.x + fp.w / 2), y: fp.y - 30, got: false });
     }
-    return { plats: platsArr, stars: starsArr, world: world };
+    return {
+      plats: platsArr,
+      stars: starsArr,
+      world: world,
+      type: type,
+      theme: THEMES[(lvl - 1) % 8]
+    };
   }
 
   function saveProgress() {
@@ -225,12 +265,16 @@
     if (level === 1) {
       layout = levelOneLayout();
       WORLD = 940;
+      layout.type = 0;
+      layout.theme = THEMES[0];
     } else {
       layout = generatedLayout(level);
       WORLD = layout.world;
     }
     plats = layout.plats;
     stars = layout.stars;
+    theme = layout.theme || THEMES[0];
+    levelType = layout.type || 0;
     player = { x: 60, y: 300, w: 30, h: 38, vx: 0, vy: 0, onGround: false, face: 1 };
     score = 0;
     win = false;
@@ -268,7 +312,7 @@
   }
 
   function updateScore() {
-    scoreEl.textContent = 'Ур. ' + level + '/' + LEVEL_COUNT + ' · Звёзды: ' + score + ' / 5';
+    scoreEl.textContent = 'Ур. ' + level + '/' + LEVEL_COUNT + ' · ' + PATTERN_NAMES[levelType] + ' · Звёзды: ' + score + ' / 5';
   }
 
   function rectsOverlap(a, b) {
@@ -449,15 +493,17 @@
 
   /* ---------- drawing ---------- */
   function drawBg() {
+    var th = theme || THEMES[0];
     var g = ctx.createLinearGradient(0, 0, 0, H);
-    g.addColorStop(0, '#241f4d');
-    g.addColorStop(0.55, '#1b1838');
-    g.addColorStop(1, '#120f26');
+    g.addColorStop(0, th.sky[0]);
+    g.addColorStop(0.55, th.sky[1]);
+    g.addColorStop(1, th.sky[2]);
     ctx.fillStyle = g;
     ctx.fillRect(0, 0, W, H);
 
     // stars in the sky (parallax)
-    ctx.fillStyle = 'rgba(255,240,200,.55)';
+    ctx.fillStyle = th.moon;
+    ctx.globalAlpha = 0.55;
     for (var i = 0; i < 60; i++) {
       var sx = ((i * 137 + 40) - camX * 0.15) % (W + 40);
       if (sx < 0) sx += W + 40;
@@ -467,9 +513,10 @@
       ctx.arc(sx, sy, r, 0, Math.PI * 2);
       ctx.fill();
     }
+    ctx.globalAlpha = 1;
 
     // castle silhouette
-    ctx.fillStyle = 'rgba(10,8,24,.85)';
+    ctx.fillStyle = th.sil;
     var off = -camX * 0.3;
     ctx.beginPath();
     ctx.moveTo(0, H);
@@ -492,14 +539,15 @@
     ctx.fill();
 
     // moon
-    ctx.fillStyle = 'rgba(255,246,214,.9)';
+    ctx.fillStyle = th.moon;
     ctx.beginPath();
     ctx.arc(680, 74, 34, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = 'rgba(255,246,214,.14)';
+    ctx.globalAlpha = 0.14;
     ctx.beginPath();
     ctx.arc(680, 74, 52, 0, Math.PI * 2);
     ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
   function roundRect(x, y, w, h, r) {
@@ -513,20 +561,21 @@
   }
 
   function drawPlats() {
+    var th = theme || THEMES[0];
     for (var i = 0; i < plats.length; i++) {
       var p = plats[i];
       var x = p.x - camX;
       if (x > W + 60 || x + p.w < -60) continue;
 
       var g = ctx.createLinearGradient(0, p.y, 0, p.y + p.h);
-      g.addColorStop(0, '#6b5a2e');
-      g.addColorStop(0.25, '#4a3d1e');
-      g.addColorStop(1, '#2a2212');
+      g.addColorStop(0, th.plat[0]);
+      g.addColorStop(0.25, th.plat[1]);
+      g.addColorStop(1, th.plat[2]);
       ctx.fillStyle = g;
       roundRect(x, p.y, p.w, p.h, 5);
       ctx.fill();
 
-      ctx.strokeStyle = 'rgba(255,220,140,.35)';
+      ctx.strokeStyle = th.edge;
       ctx.lineWidth = 2;
       roundRect(x, p.y, p.w, p.h, 5);
       ctx.stroke();
@@ -549,9 +598,9 @@
     ctx.save();
     ctx.translate(x, y + bob);
     ctx.rotate(Math.sin((t + st.x) * 0.02) * 0.18);
-    ctx.shadowColor = 'rgba(255,215,90,.9)';
+    ctx.shadowColor = (theme || THEMES[0]).glow;
     ctx.shadowBlur = 16;
-    ctx.fillStyle = '#ffd75a';
+    ctx.fillStyle = (theme || THEMES[0]).star;
     ctx.beginPath();
     for (var i = 0; i < 5; i++) {
       var a1 = -Math.PI / 2 + i * (Math.PI * 2 / 5);
@@ -626,8 +675,8 @@
     ctx.fillStyle = 'rgba(8,6,20,.72)';
     ctx.fillRect(0, 0, W, H);
     ctx.textAlign = 'center';
-    ctx.fillStyle = '#ffe9a8';
-    ctx.shadowColor = 'rgba(255,205,90,.8)';
+    ctx.fillStyle = (theme || THEMES[0]).accent;
+    ctx.shadowColor = (theme || THEMES[0]).glow;
     ctx.shadowBlur = 22;
     ctx.font = 'bold 36px Georgia, serif';
     ctx.fillText('Уровень ' + level + ' пройден!', W / 2, H / 2 - 30);
