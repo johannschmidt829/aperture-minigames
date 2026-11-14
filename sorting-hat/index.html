@@ -233,19 +233,19 @@
     var platsArr = [g1, g2, g3];
     for (var k = 0; k < floaters.length; k++) platsArr.push(floaters[k]);
 
-    // candidate spots: hovering just above a platform, low enough to jump into
+    // candidate spots: hanging in open air above a platform, clear of every slab
     var cands = [];
     for (var ci = 0; ci < floaters.length; ci++) {
       var cp = floaters[ci];
-      var xs = [cp.x + cp.w / 2, cp.x + 18, cp.x + cp.w - 18];
-      var hs = [36, 50, 64, 78];
+      var xs = [cp.x + cp.w / 2, cp.x + 20, cp.x + cp.w - 20];
+      var hs = [46, 60, 74, 88];
       for (var hi = 0; hi < hs.length; hi++) {
         for (var xi = 0; xi < xs.length; xi++) {
           var cx2 = Math.round(xs[xi]);
           var cy2 = Math.round(cp.y - hs[hi]);
           if (cy2 < 44 || cy2 > 392) continue;
           if (cx2 < 24 || cx2 > world - 24) continue;
-          if (starHits(cx2, cy2, platsArr, 8)) continue;
+          if (starHits(cx2, cy2, platsArr, 16)) continue;
           cands.push({ x: cx2, y: cy2 });
         }
       }
@@ -282,10 +282,13 @@
       }
       if (picked) starsArr.push({ x: picked.x, y: picked.y, got: false });
     }
-    // safety net: always five stars, hung just above the first platforms
+    // safety net: always five stars, lifted clear of every slab
     for (var f = 0; starsArr.length < want && f < floaters.length; f++) {
       var fp2 = floaters[f];
-      starsArr.push({ x: Math.round(fp2.x + fp2.w / 2), y: Math.round(fp2.y - 36), got: false });
+      var fx = Math.round(fp2.x + fp2.w / 2), fy = Math.round(fp2.y - 52);
+      var lift = 0;
+      while (starHits(fx, fy, platsArr, 16) && lift < 12) { fy -= 10; lift++; }
+      starsArr.push({ x: fx, y: Math.max(44, fy), got: false });
     }
     return {
       plats: platsArr,
