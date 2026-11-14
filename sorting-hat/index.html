@@ -115,7 +115,7 @@
     if (cl >= 1 && cl <= LEVEL_COUNT) level = Math.min(cl, maxUnlocked);
   } catch (e) {}
 
-  var player, plats, stars, score, win, t, camX;
+  var player, plats, stars, score, win, t, camX, sparks = [];
   var theme;
   var levelType = 0;
 
@@ -150,11 +150,11 @@
         { x: 600, y: 120, w: 140, h: 18 }
       ],
       stars: [
-        { x: 185, y: 290, got: false },
-        { x: 380, y: 232, got: false },
-        { x: 570, y: 290, got: false },
-        { x: 235, y: 170, got: false },
-        { x: 455, y: 128, got: false }
+        { x: 185, y: 280, got: false },
+        { x: 380, y: 222, got: false },
+        { x: 570, y: 280, got: false },
+        { x: 235, y: 160, got: false },
+        { x: 455, y: 118, got: false }
       ]
     };
   }
@@ -233,14 +233,59 @@
     var platsArr = [g1, g2, g3];
     for (var k = 0; k < floaters.length; k++) platsArr.push(floaters[k]);
 
+    // candidate spots: hovering just above a platform, low enough to jump into
+    var cands = [];
+    for (var ci = 0; ci < floaters.length; ci++) {
+      var cp = floaters[ci];
+      var xs = [cp.x + cp.w / 2, cp.x + 18, cp.x + cp.w - 18];
+      var hs = [36, 50, 64, 78];
+      for (var hi = 0; hi < hs.length; hi++) {
+        for (var xi = 0; xi < xs.length; xi++) {
+          var cx2 = Math.round(xs[xi]);
+          var cy2 = Math.round(cp.y - hs[hi]);
+          if (cy2 < 44 || cy2 > 392) continue;
+          if (cx2 < 24 || cx2 > world - 24) continue;
+          if (starHits(cx2, cy2, platsArr, 8)) continue;
+          cands.push({ x: cx2, y: cy2 });
+        }
+      }
+    }
+    cands.sort(function (a, b) { return a.x - b.x; });
     var starsArr = [];
-    var used = [];
-    for (var s = 0; s < 5; s++) {
-      var idx = Math.min(floaters.length - 1, Math.floor(s * (floaters.length - 1) / 4));
-      var fp = floaters[idx];
-      var spot = findStarSpot(fp, platsArr, used);
-      used.push(spot);
-      starsArr.push({ x: spot.x, y: spot.y, got: false });
+    var want = 5;
+    var span = cands.length;
+    for (var s = 0; s < want && span > 0; s++) {
+      var target = Math.round(s * (span - 1) / (want - 1));
+      var picked = null;
+      for (var off = 0; off < span && !picked; off++) {
+        var idxs = [target + off, target - off];
+        for (var oi = 0; oi < 2; oi++) {
+          var ix = idxs[oi];
+          if (ix < 0 || ix >= span) continue;
+          var c2 = cands[ix];
+          var okd = true;
+          for (var u = 0; u < starsArr.length; u++) {
+            var ddx = c2.x - starsArr[u].x, ddy = c2.y - starsArr[u].y;
+            if (ddx * ddx + ddy * ddy < 54 * 54) { okd = false; break; }
+          }
+          if (okd) { picked = c2; break; }
+        }
+      }
+      if (!picked) {
+        for (var oi2 = 0; oi2 < span; oi2++) {
+          var c3 = cands[oi2], taken = false;
+          for (var u2 = 0; u2 < starsArr.length; u2++) {
+            if (c3.x === starsArr[u2].x && c3.y === starsArr[u2].y) { taken = true; break; }
+          }
+          if (!taken) { picked = c3; break; }
+        }
+      }
+      if (picked) starsArr.push({ x: picked.x, y: picked.y, got: false });
+    }
+    // safety net: always five stars, hung just above the first platforms
+    for (var f = 0; starsArr.length < want && f < floaters.length; f++) {
+      var fp2 = floaters[f];
+      starsArr.push({ x: Math.round(fp2.x + fp2.w / 2), y: Math.round(fp2.y - 36), got: false });
     }
     return {
       plats: platsArr,
@@ -268,13 +313,13 @@
   function findStarSpot(fp, list, used) {
     var cx = Math.round(fp.x + fp.w / 2);
     var tries = [
-      { x: cx, y: fp.y - 50 },
-      { x: cx, y: fp.y - 66 },
+      { x: cx, y: fp.y - 46 },
+      { x: cx, y: fp.y - 64 },
       { x: cx, y: fp.y - 82 },
-      { x: Math.round(fp.x + 20), y: fp.y - 54 },
-      { x: Math.round(fp.x + fp.w - 20), y: fp.y - 54 },
-      { x: cx, y: fp.y + 56 },
-      { x: cx, y: fp.y + 76 }
+      { x: Math.round(fp.x + 24), y: fp.y - 48 },
+      { x: Math.round(fp.x + fp.w - 24), y: fp.y - 48 },
+      { x: cx, y: fp.y + 58 },
+      { x: cx, y: fp.y + 78 }
     ];
     for (var i = 0; i < tries.length; i++) {
       var c = tries[i];
