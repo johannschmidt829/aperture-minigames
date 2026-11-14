@@ -234,10 +234,13 @@
     for (var k = 0; k < floaters.length; k++) platsArr.push(floaters[k]);
 
     var starsArr = [];
+    var used = [];
     for (var s = 0; s < 5; s++) {
       var idx = Math.min(floaters.length - 1, Math.floor(s * (floaters.length - 1) / 4));
       var fp = floaters[idx];
-      starsArr.push({ x: Math.round(fp.x + fp.w / 2), y: fp.y - 30, got: false });
+      var spot = findStarSpot(fp, platsArr, used);
+      used.push(spot);
+      starsArr.push({ x: spot.x, y: spot.y, got: false });
     }
     return {
       plats: platsArr,
@@ -246,6 +249,61 @@
       type: type,
       theme: THEMES[(lvl - 1) % 8]
     };
+  }
+
+
+  // star must hang in free air: not inside any platform, clear of others
+  function starHits(x, y, list, pad) {
+    var r = 15 + (pad === undefined ? 12 : pad);
+    for (var i = 0; i < list.length; i++) {
+      var p = list[i];
+      var nx = Math.max(p.x, Math.min(x, p.x + p.w));
+      var ny = Math.max(p.y, Math.min(y, p.y + p.h));
+      var dx = x - nx, dy = y - ny;
+      if (dx * dx + dy * dy < r * r) return true;
+    }
+    return false;
+  }
+
+  function findStarSpot(fp, list, used) {
+    var cx = Math.round(fp.x + fp.w / 2);
+    var tries = [
+      { x: cx, y: fp.y - 50 },
+      { x: cx, y: fp.y - 66 },
+      { x: cx, y: fp.y - 82 },
+      { x: Math.round(fp.x + 20), y: fp.y - 54 },
+      { x: Math.round(fp.x + fp.w - 20), y: fp.y - 54 },
+      { x: cx, y: fp.y + 56 },
+      { x: cx, y: fp.y + 76 }
+    ];
+    for (var i = 0; i < tries.length; i++) {
+      var c = tries[i];
+      if (c.y < 40 || c.y > 392) continue;
+      if (starHits(c.x, c.y, list)) continue;
+      var clash = false;
+      for (var u = 0; u < used.length; u++) {
+        var dx = c.x - used[u].x, dy = c.y - used[u].y;
+        if (dx * dx + dy * dy < 60 * 60) { clash = true; break; }
+      }
+      if (clash) continue;
+      return { x: c.x, y: c.y };
+    }
+    // last resort: hover high above, nudged sideways until free
+    for (var k = 1; k <= 14; k++) {
+      var yy = fp.y - 50 - k * 14;
+      if (yy < 46) break;
+      for (var dxs = 0; dxs <= 3; dxs++) {
+        var xx = cx + (dxs === 0 ? 0 : (dxs % 2 ? 1 : -1) * Math.ceil(dxs / 2) * 34);
+        if (starHits(xx, yy, list)) continue;
+        var far = true;
+        for (var u2 = 0; u2 < used.length; u2++) {
+          var ddx = xx - used[u2].x, ddy = yy - used[u2].y;
+          if (ddx * ddx + ddy * ddy < 46 * 46) { far = false; break; }
+        }
+        if (far) return { x: xx, y: yy };
+      }
+    }
+    return { x: cx, y: Math.max(48, fp.y - 52) };
   }
 
   function saveProgress() {
