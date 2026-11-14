@@ -117,7 +117,6 @@
 
   var player, plats, stars, score, win, t, camX, sparks = [];
   var theme;
-  var levelType = 0;
 
   var keys = { left: false, right: false, jump: false };
   var jumpBuf = 0;
@@ -170,81 +169,130 @@
     { name: 'Глубина', sky: ['#0f2e33', '#0a1f24', '#061214'], plat: ['#2e5a5a', '#204040', '#122626'], edge: 'rgba(140,255,240,.35)', star: '#7ff5e0', glow: 'rgba(120,240,220,.9)', sil: 'rgba(4,14,16,.85)', moon: 'rgba(190,255,245,.85)', accent: '#c8fff6' }
   ];
 
-  var PATTERN_NAMES = ['Лестница', 'Башни', 'Острова', 'Зигзаг', 'Колодец', 'Камни', 'Спираль', 'Пещеры'];
-  var W_BY_TYPE = [120, 96, 118, 104, 108, 62, 98, 88];
+  var THEME_ADJ = ['Ночной', 'Алый', 'Ледяной', 'Забытый', 'Лунный', 'Древний', 'Тайный', 'Звёздный', 'Туманный', 'Хрустальный', 'Багровый', 'Изумрудный', 'Пепельный', 'Серебряный', 'Огненный', 'Тенистый', 'Медный', 'Лазурный', 'Полуночный', 'Заколдованный', 'Сумрачный', 'Зеркальный', 'Костяной', 'Ветряной'];
+  var THEME_NOUN = ['замок', 'зал', 'лес', 'своды', 'башня', 'галерея', 'лабиринт', 'двор', 'колодец', 'переход', 'чертог', 'сад', 'мост', 'склеп', 'придел', 'ярус', 'коридор', 'амфитеатр', 'шпиль', 'грот', 'каскад', 'обрыв', 'предел', 'вихрь'];
 
-  function pathFor(type, n, rnd) {
-    var pts = [], x = 90, y = 322;
-    for (var i = 0; i < n; i++) {
-      pts.push({ x: Math.round(x), y: Math.round(y) });
-      var dx, dy;
-      switch (type) {
-        case 0: dx = 165; dy = -52; break;
-        case 1: dx = 148; dy = (i % 3 === 0) ? -96 : 30; break;
-        case 2: dx = 176; dy = (i % 2) ? 20 : -20; break;
-        case 3: dx = 170; dy = (i % 2) ? -80 : 46; break;
-        case 4: dx = 152; dy = (i < n / 2) ? 64 : -64; break;
-        case 5: dx = 116; dy = Math.round(rnd() * 40 - 20); break;
-        case 6: dx = (i % 4 < 2) ? 150 : 72; dy = -58; break;
-        default: dx = 146; dy = (i % 2) ? -72 : 2; break;
-      }
-      x += dx; y += dy;
-      if (y < 84) y = 84;
-      if (y > 352) y = 352;
-    }
-    return pts;
+  function hsl(h, s, l) { return 'hsl(' + h + ',' + s + '%,' + l + '%)'; }
+  function hsla(h, s, l, a) { return 'hsla(' + h + ',' + s + '%,' + l + '%,' + a + ')'; }
+
+  // every level gets its own palette and its own name
+  function themeFor(lvl) {
+    var r = seededRand(lvl * 2246822519 + 3266489917);
+    var hue = Math.floor(r() * 360);
+    var hue2 = (hue + 26 + Math.floor(r() * 70)) % 360;
+    var sat = 26 + Math.floor(r() * 28);
+    var light = 11 + Math.floor(r() * 9);
+    var nameIdx = uniqueNameIndex(lvl);
+    return {
+      name: THEME_ADJ[nameIdx % THEME_ADJ.length] + ' ' + THEME_NOUN[Math.floor(nameIdx / THEME_ADJ.length)],
+      sky: [hsl(hue, sat, light + 11), hsl(hue, sat, light + 4), hsl(hue, sat, Math.max(5, light - 5))],
+      plat: [hsl(hue2, sat + 20, 36), hsl(hue2, sat + 16, 25), hsl(hue2, sat + 12, 14)],
+      edge: hsla(hue2, 82, 74, 0.38),
+      star: hsl((hue + 48) % 360, 88, 68),
+      glow: hsla((hue + 48) % 360, 92, 62, 0.9),
+      sil: hsla(hue, 52, 5, 0.86),
+      moon: hsl((hue + 20) % 360, 38, 91),
+      accent: hsl((hue + 48) % 360, 82, 83)
+    };
   }
 
+  // one name per level, no repeats: walk a deterministic permutation of all pairs
+  var NAME_PERM = null;
+  function uniqueNameIndex(lvl) {
+    var total = THEME_ADJ.length * THEME_NOUN.length;
+    if (!NAME_PERM) {
+      var rr = seededRand(20241114);
+      NAME_PERM = [];
+      for (var i = 0; i < total; i++) NAME_PERM.push(i);
+      for (var j = total - 1; j > 0; j--) {
+        var k = Math.floor(rr() * (j + 1));
+        var tmp = NAME_PERM[j];
+        NAME_PERM[j] = NAME_PERM[k];
+        NAME_PERM[k] = tmp;
+      }
+    }
+    return NAME_PERM[(lvl - 1) % total];
+  }
+
+  // one level, one shape: parameters come from the level's own seed
   function generatedLayout(lvl) {
     var rnd = seededRand(lvl * 999983 + 7);
-    var type = (lvl - 2) % 8;
-    var world = 940 + Math.min((lvl - 1) * 4, 560);
-    var n = 8 + Math.min(Math.floor(lvl / 30), 4);
-    if (type === 5) n += 4;
-    var pts = pathFor(type, n, rnd);
-    var baseW = Math.max(W_BY_TYPE[type] - Math.floor(lvl / 40) * 8, 54);
-    var floaters = [];
-    for (var i = 0; i < pts.length; i++) {
-      var pw = Math.max(Math.round(baseW - rnd() * 14), 50);
-      var px = pts[i].x;
-      if (px < 24) px = 24;
-      if (px + pw > world - 24) px = world - 24 - pw;
-      floaters.push({ x: px, y: pts[i].y, w: pw, h: 18 });
+    var t = (lvl - 1) / (LEVEL_COUNT - 1);
+    var world = Math.round(900 + t * 600 + rnd() * 140);
+    var n = 8 + Math.floor(t * 6) + Math.floor(rnd() * 3);
+    if (n < 8) n = 8;
+    if (n > 15) n = 15;
+    var step = (world - 210) / n;
+    var climb = rnd() * 2 - 1;
+    var waveAmp = 12 + rnd() * 74;
+    var waveLen = 1.6 + rnd() * 3.4;
+    var jitter = 6 + rnd() * 30;
+    var yStart = 236 + Math.round(rnd() * 96);
+    var narrow = 0.5 + rnd() * 0.8;
+    var baseW = Math.max(54, (128 - t * 48) * narrow);
+    var stair = rnd() < 0.4;
+
+    var pts = [];
+    var x = 92, y = yStart;
+    for (var i = 0; i < n; i++) {
+      pts.push({ x: Math.round(x), y: Math.round(y) });
+      var dx = step + (rnd() - 0.5) * jitter * 2;
+      var dy;
+      if (stair) {
+        dy = -(18 + rnd() * 34);
+      } else {
+        dy = -climb * 20 - Math.sin(i / waveLen * Math.PI) * waveAmp * 0.5 + (rnd() - 0.5) * jitter;
+      }
+      x += dx;
+      y += dy;
+      if (y < 82) y = 82;
+      if (y > 352) y = 352;
     }
-    // keep every jump makable: <=190px sideways, <=110px upward
+
+    var floaters = [];
+    for (var p = 0; p < pts.length; p++) {
+      var pw = Math.max(Math.round(baseW + (rnd() - 0.5) * 22), 50);
+      var px = pts[p].x;
+      if (px < 26) px = 26;
+      if (px + pw > world - 26) px = world - 26 - pw;
+      floaters.push({ x: px, y: pts[p].y, w: pw, h: 18 });
+    }
+    // no jump may be impossible
     for (var c = 1; c < floaters.length; c++) {
       var pa = floaters[c - 1], pb = floaters[c];
       var ca = pa.x + pa.w / 2, cb = pb.x + pb.w / 2;
-      if (cb - ca > 190) {
-        pb.x = Math.round(ca + 190 - pb.w / 2);
-        if (pb.x + pb.w > world - 24) pb.x = world - 24 - pb.w;
-      } else if (ca - cb > 190) {
-        pb.x = Math.round(ca - 190 - pb.w / 2);
-        if (pb.x < 24) pb.x = 24;
+      if (cb - ca > 188) {
+        pb.x = Math.round(ca + 188 - pb.w / 2);
+        if (pb.x + pb.w > world - 26) pb.x = world - 26 - pb.w;
+      } else if (ca - cb > 188) {
+        pb.x = Math.round(ca - 188 - pb.w / 2);
+        if (pb.x < 26) pb.x = 26;
       }
       var va = pa.y - pb.y;
-      if (va > 110) pb.y = pa.y - 110;
-      if (va < -110) pb.y = pa.y + 110;
+      if (va > 108) pb.y = pa.y - 108;
+      if (va < -108) pb.y = pa.y + 108;
     }
-    var gapW = Math.min(58 + lvl * 0.4, 132);
-    var g1 = { x: -40, y: 400, w: 210, h: 60 };
-    var g2 = { x: Math.round(world * 0.45), y: 400, w: 190, h: 60 };
-    var g3 = { x: world - 250, y: 400, w: 290, h: 60 };
+
+    var gapA = Math.min(54 + lvl * 0.34, 128);
+    var gapB = Math.min(44 + lvl * 0.40, 130);
+    var g1 = { x: -40, y: 400, w: 200, h: 60 };
+    var g2 = { x: Math.round(world * 0.44), y: 400, w: 180, h: 60 };
+    var g3 = { x: world - 240, y: 400, w: 280, h: 60 };
     var platsArr = [g1, g2, g3];
     for (var k = 0; k < floaters.length; k++) platsArr.push(floaters[k]);
 
-    // candidate spots: hanging in open air above a platform, clear of every slab
+    // star spots: low over a slab, inside a single jump
     var cands = [];
     for (var ci = 0; ci < floaters.length; ci++) {
       var cp = floaters[ci];
       var xs = [cp.x + cp.w / 2, cp.x + 20, cp.x + cp.w - 20];
-      var hs = [46, 60, 74, 88];
+      var hs = [46, 58, 70, 84];
       for (var hi = 0; hi < hs.length; hi++) {
         for (var xi = 0; xi < xs.length; xi++) {
           var cx2 = Math.round(xs[xi]);
           var cy2 = Math.round(cp.y - hs[hi]);
           if (cy2 < 44 || cy2 > 392) continue;
-          if (cx2 < 24 || cx2 > world - 24) continue;
+          if (cx2 < 26 || cx2 > world - 26) continue;
           if (starHits(cx2, cy2, platsArr, 16)) continue;
           cands.push({ x: cx2, y: cy2 });
         }
@@ -282,7 +330,6 @@
       }
       if (picked) starsArr.push({ x: picked.x, y: picked.y, got: false });
     }
-    // safety net: always five stars, lifted clear of every slab
     for (var f = 0; starsArr.length < want && f < floaters.length; f++) {
       var fp2 = floaters[f];
       var fx = Math.round(fp2.x + fp2.w / 2), fy = Math.round(fp2.y - 52);
@@ -290,15 +337,15 @@
       while (starHits(fx, fy, platsArr, 16) && lift < 12) { fy -= 10; lift++; }
       starsArr.push({ x: fx, y: Math.max(44, fy), got: false });
     }
+
     return {
       plats: platsArr,
       stars: starsArr,
       world: world,
-      type: type,
-      theme: THEMES[(lvl - 1) % 8]
+      type: 0,
+      theme: themeFor(lvl)
     };
   }
-
 
   // star must hang in free air: not inside any platform, clear of others
   function starHits(x, y, list, pad) {
@@ -380,7 +427,6 @@
     plats = layout.plats;
     stars = layout.stars;
     theme = layout.theme || THEMES[0];
-    levelType = layout.type || 0;
     player = { x: 60, y: 300, w: 30, h: 38, vx: 0, vy: 0, onGround: false, face: 1 };
     score = 0;
     win = false;
@@ -418,7 +464,7 @@
   }
 
   function updateScore() {
-    scoreEl.textContent = 'Ур. ' + level + '/' + LEVEL_COUNT + ' · ' + PATTERN_NAMES[levelType] + ' · Звёзды: ' + score + ' / 5';
+    scoreEl.textContent = 'Ур. ' + level + '/' + LEVEL_COUNT + ' · ' + ((theme && theme.name) || '') + ' · Звёзды: ' + score + ' / 5';
   }
 
   function rectsOverlap(a, b) {
