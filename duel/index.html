@@ -1,0 +1,893 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Дуэль Шляпы — игра на двоих</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%8E%A9%3C/text%3E%3C/svg%3E">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: #0f0d20;
+    font-family: Georgia, 'Times New Roman', serif;
+    color: #f4e9c8;
+    overflow: hidden;
+    touch-action: none;
+    user-select: none;
+  }
+  .view { display: none; width: 100%; height: 100%; }
+  .view.on { display: flex; }
+
+  /* ---------- host ---------- */
+  #hostView { flex-direction: column; align-items: center; justify-content: center; position: relative; }
+  #stage {
+    position: relative;
+    width: min(100vw, calc(100vh * 960 / 600));
+    aspect-ratio: 960 / 600;
+  }
+  canvas {
+    display: block; width: 100%; height: 100%;
+    border-radius: 12px;
+    box-shadow: 0 0 0 2px #6b5a2e, 0 0 50px rgba(180,140,60,.25);
+    background: #1b1838;
+  }
+  #lobby {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    gap: 10px;
+    background: rgba(10,8,24,.92);
+    border-radius: 12px;
+    text-align: center;
+    padding: 20px;
+  }
+  #lobby.hide { display: none; }
+  #lobby h1 {
+    margin: 0; font-size: clamp(22px, 3.6vw, 42px);
+    color: #ffe9a8; letter-spacing: 1px;
+    text-shadow: 0 0 22px rgba(255,200,90,.55);
+  }
+  #lobby .sub { margin: 0; font-size: clamp(12px, 1.7vw, 17px); opacity: .8; }
+  #lobby .row { display: flex; align-items: center; gap: clamp(14px, 3vw, 40px); margin-top: 4px; }
+  #qrBox {
+    width: clamp(110px, 16vw, 190px); aspect-ratio: 1;
+    background: #fff; border-radius: 10px; padding: 8px;
+    display: flex; align-items: center; justify-content: center;
+  }
+  #qrBox img { width: 100%; height: 100%; image-rendering: pixelated; }
+  #code {
+    font-size: clamp(30px, 6vw, 64px);
+    letter-spacing: .18em;
+    color: #ffe9a8;
+    font-weight: bold;
+    text-shadow: 0 0 18px rgba(255,205,90,.6);
+  }
+  #status { margin: 2px 0 0; font-size: clamp(12px, 1.8vw, 18px); color: #ffe9a8; min-height: 1.4em; }
+  #status.err { color: #ff9a9a; }
+  .hint { margin: 0; font-size: clamp(10px, 1.4vw, 14px); opacity: .55; }
+  #hintBar {
+    position: absolute; bottom: 8px; left: 50%; transform: translateX(-50%);
+    font-size: clamp(10px, 1.4vw, 14px); color: rgba(244,233,200,.5);
+    pointer-events: none; white-space: nowrap;
+  }
+
+  /* ---------- phone pad ---------- */
+  #padView {
+    flex-direction: column; justify-content: space-between;
+    padding: 12px 12px 18px;
+    background: radial-gradient(circle at 50% 0%, #241f4d, #0f0d20 70%);
+  }
+  #padTop {
+    display: flex; align-items: center; justify-content: space-between;
+    font-size: 15px; letter-spacing: .5px;
+    padding: 4px 6px;
+  }
+  #padScore { font-size: 22px; color: #ffe9a8; }
+  #padTime { font-variant-numeric: tabular-nums; opacity: .85; }
+  #padCenter { text-align: center; padding: 0 16px; }
+  #padMsg { font-size: 16px; line-height: 1.4; margin: 8px 0 0; min-height: 2.8em; opacity: .9; }
+  #bigScore {
+    font-size: 58px; color: #ffe9a8; margin: 6px 0 0;
+    text-shadow: 0 0 26px rgba(255,205,90,.5);
+  }
+  #btns {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    align-items: end;
+  }
+  #btns button {
+    font-family: inherit;
+    font-size: clamp(26px, 8vw, 40px);
+    color: #f4e9c8;
+    border-radius: 18px;
+    border: 2px solid rgba(255,220,140,.4);
+    background: radial-gradient(circle at 40% 30%, rgba(255,230,160,.22), rgba(120,90,25,.20) 75%, transparent);
+    padding: 0;
+    height: clamp(84px, 26vw, 130px);
+    touch-action: none;
+    transition: transform .05s;
+  }
+  #btns button.jump {
+    border-color: rgba(140,255,190,.5);
+    background: radial-gradient(circle at 40% 30%, rgba(150,255,200,.28), rgba(20,110,70,.22) 75%, transparent);
+    height: clamp(104px, 32vw, 156px);
+  }
+  #btns button.down { transform: scale(.94); filter: brightness(1.5); }
+  #padFoot { text-align: center; font-size: 12px; opacity: .45; margin-top: 10px; }
+</style>
+</head>
+<body>
+
+<div id="hostView" class="view">
+  <div id="stage">
+    <canvas id="g" width="960" height="600"></canvas>
+    <div id="lobby">
+      <h1>🎩 Дуэль Шляпы</h1>
+      <p class="sub">Два волшебника, один экран, один телефон-пульт</p>
+      <div class="row">
+        <div>
+          <div id="code">····</div>
+          <p class="hint">код для телефона</p>
+        </div>
+        <div id="qrBox"><img id="qr" alt="QR"></div>
+      </div>
+      <p id="status">Готовлю арену…</p>
+      <p class="hint">Игрок 1 (этот экран): ← → и пробел · Игрок 2: телефон</p>
+    </div>
+  </div>
+  <div id="hintBar">← → — бег · Пробел — прыжок · Enter — сыграть ещё</div>
+</div>
+
+<div id="padView" class="view">
+  <div id="padTop">
+    <span id="padScore">0 : 0</span>
+    <span id="padTime">60</span>
+  </div>
+  <div id="padCenter">
+    <div id="bigScore">0</div>
+    <p id="padMsg">Подключаюсь к арене…</p>
+  </div>
+  <div>
+    <div id="btns">
+      <button id="bl" aria-label="влево">◀</button>
+      <button id="bj" class="jump" aria-label="прыжок">▲</button>
+      <button id="br" aria-label="вправо">▶</button>
+    </div>
+    <p id="padFoot">Держи палец — волшебник бежит</p>
+  </div>
+</div>
+
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<script>
+(function () {
+  'use strict';
+
+  var ROUND_SECONDS = 60;
+  var CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+
+  var joinMatch = location.hash.match(/join=([A-Za-z2-9]{4})/);
+  var IS_PAD = !!joinMatch;
+  var JOIN_CODE = joinMatch ? joinMatch[1].toUpperCase() : null;
+
+  function randomCode() {
+    var s = '';
+    for (var i = 0; i < 4; i++) s += CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)];
+    return s;
+  }
+
+  /* ---------------- sound ---------------- */
+  var actx = null;
+  function blip(freq, dur, type, vol) {
+    try {
+      if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+      if (actx.state === 'suspended') actx.resume();
+      var o = actx.createOscillator();
+      var g = actx.createGain();
+      o.type = type || 'square';
+      o.frequency.value = freq;
+      g.gain.value = vol === undefined ? 0.05 : vol;
+      o.connect(g);
+      g.connect(actx.destination);
+      var t0 = actx.currentTime;
+      g.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
+      o.start(t0);
+      o.stop(t0 + dur + 0.02);
+    } catch (e) {}
+  }
+
+  /* ================= PHONE CONTROLLER ================= */
+  if (IS_PAD) {
+    document.getElementById('padView').classList.add('on');
+    var padScore = document.getElementById('padScore');
+    var padTime = document.getElementById('padTime');
+    var padMsg = document.getElementById('padMsg');
+    var bigScore = document.getElementById('bigScore');
+
+    var conn = null;
+    var peer = null;
+    var input = { l: 0, r: 0, j: 0 };
+    var lastSent = '';
+    var reconnectTries = 0;
+
+    function setMsg(t) { padMsg.textContent = t; }
+
+    function send(force) {
+      if (!conn || !conn.open) return;
+      var s = input.l + ',' + input.r + ',' + input.j;
+      if (!force && s === lastSent) return;
+      lastSent = s;
+      try { conn.send({ t: 'in', l: input.l, r: input.r, j: input.j }); } catch (e) {}
+    }
+
+    function connectPad() {
+      setMsg('Подключаюсь к арене…');
+      peer = new Peer({ debug: 0 });
+
+      peer.on('open', function () {
+        conn = peer.connect('hatduel-' + JOIN_CODE, { reliable: true });
+        conn.on('open', function () {
+          setMsg('Есть связь! Ждём второго волшебника.');
+          blip(660, 0.12, 'sine');
+          send(true);
+        });
+        conn.on('data', function (d) {
+          if (!d) return;
+          if (d.t === 'state') {
+            padScore.textContent = d.a + ' : ' + d.b;
+            padTime.textContent = d.sec;
+            bigScore.textContent = d.b;
+            if (d.phase === 'play') setMsg('Лови звёзды!');
+            else if (d.phase === 'countdown') setMsg('Приготовься… ' + d.cd);
+            else if (d.phase === 'over') setMsg(d.msg || 'Конец дуэли');
+            else if (d.phase === 'lobby') setMsg('Ждём начала…');
+          }
+        });
+        conn.on('close', function () {
+          setMsg('Связь потеряна. Обнови страницу и подключись снова.');
+          conn = null;
+        });
+      });
+
+      peer.on('error', function (e) {
+        var m = (e && e.type) || '';
+        if (m === 'peer-unavailable') {
+          setMsg('Арена с кодом ' + JOIN_CODE + ' не отвечает. Проверь код на экране компьютера.');
+        } else if (m === 'network' || m === 'server-error' || m === 'socket-error') {
+          setMsg('Нет связи с сервером. Проверь интернет на телефоне.');
+        } else {
+          if (reconnectTries < 2) {
+            reconnectTries++;
+            setTimeout(connectPad, 1500);
+          } else {
+            setMsg('Не удалось подключиться (' + m + '). Обнови страницу.');
+          }
+        }
+      });
+    }
+
+    function bindHold(el, key) {
+      function on(e) {
+        e.preventDefault();
+        input[key] = 1;
+        el.classList.add('down');
+        send();
+        blip(key === 'j' ? 520 : 380, 0.05, 'sine', 0.03);
+      }
+      function off(e) {
+        if (e) e.preventDefault();
+        input[key] = 0;
+        el.classList.remove('down');
+        send();
+      }
+      el.addEventListener('touchstart', on, { passive: false });
+      el.addEventListener('touchend', off, { passive: false });
+      el.addEventListener('touchcancel', off, { passive: false });
+      el.addEventListener('mousedown', on);
+      el.addEventListener('mouseup', off);
+      el.addEventListener('mouseleave', off);
+    }
+
+    bindHold(document.getElementById('bl'), 'l');
+    bindHold(document.getElementById('br'), 'r');
+    bindHold(document.getElementById('bj'), 'j');
+
+    document.addEventListener('gesturestart', function (e) { e.preventDefault(); });
+    window.addEventListener('beforeunload', function () { send(true); });
+
+    // heartbeat so a lost "release" cannot stick
+    setInterval(function () { send(true); }, 200);
+
+    connectPad();
+    return;
+  }
+
+  /* ================= HOST GAME ================= */
+  document.getElementById('hostView').classList.add('on');
+
+  var canvas = document.getElementById('g');
+  var ctx = canvas.getContext('2d');
+  var W = canvas.width, H = canvas.height;
+
+  var lobby = document.getElementById('lobby');
+  var codeEl = document.getElementById('code');
+  var qrEl = document.getElementById('qr');
+  var statusEl = document.getElementById('status');
+
+  var GRAV = 0.72, MAXFALL = 15, MOVE = 1.05, FRICTION = 0.80, MAXSPEED = 6.4, JUMP = -14.4;
+  var PW = 30, PH = 38;
+
+  var PLATS = [
+    { x: -40, y: 530, w: 1040, h: 80 },
+    { x: 80, y: 445, w: 160, h: 18 },
+    { x: 720, y: 445, w: 160, h: 18 },
+    { x: 390, y: 370, w: 180, h: 18 },
+    { x: 230, y: 285, w: 140, h: 18 },
+    { x: 590, y: 285, w: 140, h: 18 },
+    { x: 400, y: 195, w: 160, h: 18 }
+  ];
+
+  var P1_COLORS = ['#b32630', '#4a0d13'];
+  var P2_COLORS = ['#2f8f5b', '#0f3a24'];
+
+  var phase = 'lobby';        // lobby | countdown | play | over
+  var countdown = 3;
+  var countdownT = 0;
+  var timeLeft = ROUND_SECONDS;
+  var t = 0;
+  var star = null;
+  var starTimer = 0;
+  var winner = null;
+  var resultMsg = '';
+
+  var p1, p2;
+  var keys = { l: 0, r: 0, j: 0 };
+  var padInput = { l: 0, r: 0, j: 0 };
+
+  function makeWizard(x, colors) {
+    return {
+      x: x, y: 400, w: PW, h: PH, vx: 0, vy: 0,
+      onGround: false, face: 1, score: 0,
+      jumpBuf: 0, jumpWasDown: false, jumpCut: false, coyote: 0,
+      colors: colors, pop: 0
+    };
+  }
+
+  function resetMatch() {
+    p1 = makeWizard(120, P1_COLORS);
+    p2 = makeWizard(W - 150, P2_COLORS);
+    p1.y = 530 - PH; p2.y = 530 - PH;
+    timeLeft = ROUND_SECONDS;
+    star = null;
+    starTimer = 20;
+    winner = null;
+    resultMsg = '';
+    t = 0;
+    keys = { l: 0, r: 0, j: 0 };
+    padInput = { l: 0, r: 0, j: 0 };
+  }
+
+  function overlap(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function spawnStar() {
+    var pl = PLATS[1 + Math.floor(Math.random() * (PLATS.length - 1))];
+    var sx = pl.x + 24 + Math.random() * Math.max(20, pl.w - 48);
+    star = { x: Math.round(sx), y: Math.round(pl.y - 46), got: false };
+  }
+
+  function stepPlayer(p, inp) {
+    var dir = 0;
+    if (inp.l) dir -= 1;
+    if (inp.r) dir += 1;
+
+    p.vx += dir * MOVE;
+    if (Math.abs(p.vx) > MAXSPEED) p.vx = MAXSPEED * Math.sign(p.vx);
+    if (dir === 0) {
+      p.vx *= FRICTION;
+      if (Math.abs(p.vx) < 0.08) p.vx = 0;
+    }
+    if (dir !== 0) p.face = dir > 0 ? 1 : -1;
+
+    p.vy += GRAV;
+    if (p.vy > MAXFALL) p.vy = MAXFALL;
+
+    var jumpDown = !!inp.j;
+    if (jumpDown && !p.jumpWasDown) p.jumpBuf = 8;
+    p.jumpWasDown = jumpDown;
+    if (p.jumpBuf > 0) p.jumpBuf--;
+    if (p.onGround) p.coyote = 6; else if (p.coyote > 0) p.coyote--;
+
+    // horizontal
+    p.x += p.vx;
+    for (var i = 0; i < PLATS.length; i++) {
+      var q = PLATS[i];
+      if (overlap(p, q)) {
+        if (p.vx > 0) p.x = q.x - p.w;
+        else if (p.vx < 0) p.x = q.x + q.w;
+        p.vx = 0;
+      }
+    }
+
+    // vertical
+    p.y += p.vy;
+    var wasAir = !p.onGround;
+    p.onGround = false;
+    for (var j = 0; j < PLATS.length; j++) {
+      var r = PLATS[j];
+      if (overlap(p, r)) {
+        if (p.vy > 0) {
+          p.y = r.y - p.h;
+          p.vy = 0;
+          p.onGround = true;
+        } else if (p.vy < 0) {
+          p.y = r.y + r.h;
+          p.vy = 0;
+        }
+      }
+    }
+    if (wasAir && p.onGround) p.pop = 1;
+
+    if (p.jumpBuf > 0 && (p.onGround || p.coyote > 0)) {
+      p.vy = JUMP;
+      p.onGround = false;
+      p.coyote = 0;
+      p.jumpBuf = 0;
+      p.jumpCut = false;
+      if (p === p1) blip(430, 0.07, 'square', 0.035);
+    }
+    if (!jumpDown && p.vy < -4 && !p.jumpCut) {
+      p.vy *= 0.55;
+      p.jumpCut = true;
+    }
+    if (p.onGround) p.jumpCut = false;
+
+    if (p.x < 8) { p.x = 8; p.vx = 0; }
+    if (p.x + p.w > W - 8) { p.x = W - 8 - p.w; p.vx = 0; }
+    if (p.y > H + 140) {
+      p.x = p === p1 ? 120 : W - 150;
+      p.y = 530 - PH;
+      p.vx = 0; p.vy = 0;
+    }
+    if (p.pop > 0) p.pop *= 0.86;
+  }
+
+  function update() {
+    t++;
+
+    if (phase === 'countdown') {
+      countdownT++;
+      if (countdownT % 60 === 0) {
+        countdown--;
+        if (countdown > 0) blip(520, 0.1, 'sine', 0.05);
+        if (countdown <= 0) {
+          phase = 'play';
+          blip(780, 0.22, 'sine', 0.06);
+        }
+      }
+      stepPlayer(p1, { l: 0, r: 0, j: 0 });
+      stepPlayer(p2, { l: 0, r: 0, j: 0 });
+      return;
+    }
+
+    if (phase !== 'play') return;
+
+    if (t % 60 === 0) {
+      timeLeft--;
+      if (timeLeft <= 0) {
+        timeLeft = 0;
+        finish();
+        return;
+      }
+    }
+
+    stepPlayer(p1, keys);
+    stepPlayer(p2, padInput);
+
+    if (!star) {
+      starTimer--;
+      if (starTimer <= 0) spawnStar();
+    } else if (!star.got) {
+      var box = { x: star.x - 15, y: star.y - 15, w: 30, h: 30 };
+      var got1 = overlap(p1, box);
+      var got2 = overlap(p2, box);
+      if (got1 || got2) {
+        star.got = true;
+        if (got1) p1.score++;
+        if (got2) p2.score++;
+        blip(got1 ? 880 : 720, 0.13, 'triangle', 0.06);
+        star = null;
+        starTimer = 24;
+        if (p1.score >= 12 || p2.score >= 12) { finish(); return; }
+      }
+    }
+  }
+
+  function finish() {
+    phase = 'over';
+    if (p1.score > p2.score) { winner = 1; resultMsg = 'Победил Гриффиндор!'; }
+    else if (p2.score > p1.score) { winner = 2; resultMsg = 'Победил Слизерин!'; }
+    else { winner = 0; resultMsg = 'Ничья — Шляпа довольна обоими!'; }
+    blip(600, 0.16, 'sine', 0.06);
+    setTimeout(function () { blip(760, 0.16, 'sine', 0.06); }, 150);
+    setTimeout(function () { blip(920, 0.3, 'sine', 0.06); }, 300);
+  }
+
+  function startMatch() {
+    resetMatch();
+    phase = 'countdown';
+    countdown = 3;
+    countdownT = 0;
+    lobby.classList.add('hide');
+    blip(520, 0.1, 'sine', 0.05);
+  }
+
+  /* ---------- drawing ---------- */
+  function roundRect(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawBg() {
+    var g = ctx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#241f4d');
+    g.addColorStop(0.55, '#1b1838');
+    g.addColorStop(1, '#120f26');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.fillStyle = 'rgba(255,240,200,.55)';
+    for (var i = 0; i < 70; i++) {
+      var sx = (i * 173 + 40) % W;
+      var sy = (i * 97) % 300;
+      var r = (i % 3 === 0) ? 1.7 : 0.9;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.fillStyle = 'rgba(10,8,24,.8)';
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    ctx.lineTo(0, 380);
+    ctx.lineTo(90, 380);
+    ctx.lineTo(90, 320);
+    ctx.lineTo(130, 320);
+    ctx.lineTo(130, 380);
+    ctx.lineTo(250, 380);
+    ctx.lineTo(250, 270);
+    ctx.lineTo(300, 270);
+    ctx.lineTo(300, 380);
+    ctx.lineTo(430, 380);
+    ctx.lineTo(430, 335);
+    ctx.lineTo(480, 335);
+    ctx.lineTo(480, 380);
+    ctx.lineTo(W, 380);
+    ctx.lineTo(W, H);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = 'rgba(255,246,214,.9)';
+    ctx.beginPath();
+    ctx.arc(830, 90, 34, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,246,214,.12)';
+    ctx.beginPath();
+    ctx.arc(830, 90, 54, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  function drawPlats() {
+    for (var i = 0; i < PLATS.length; i++) {
+      var p = PLATS[i];
+      var g = ctx.createLinearGradient(0, p.y, 0, p.y + p.h);
+      g.addColorStop(0, '#6b5a2e');
+      g.addColorStop(0.25, '#4a3d1e');
+      g.addColorStop(1, '#2a2212');
+      ctx.fillStyle = g;
+      roundRect(p.x, p.y, p.w, p.h, 5);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(255,220,140,.33)';
+      ctx.lineWidth = 2;
+      roundRect(p.x, p.y, p.w, p.h, 5);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(0,0,0,.22)';
+      ctx.lineWidth = 1;
+      for (var bx = p.x + 26; bx < p.x + p.w - 6; bx += 26) {
+        ctx.beginPath();
+        ctx.moveTo(bx, p.y + 2);
+        ctx.lineTo(bx, p.y + p.h - 2);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function drawStar(s) {
+    var bob = Math.sin(t * 0.07) * 3;
+    ctx.save();
+    ctx.translate(s.x, s.y + bob);
+    ctx.rotate(Math.sin(t * 0.03) * 0.2);
+    ctx.shadowColor = 'rgba(255,215,90,.95)';
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = '#ffd75a';
+    ctx.beginPath();
+    for (var i = 0; i < 5; i++) {
+      var a1 = -Math.PI / 2 + i * (Math.PI * 2 / 5);
+      var a2 = a1 + Math.PI / 5;
+      ctx.lineTo(Math.cos(a1) * 15, Math.sin(a1) * 15);
+      ctx.lineTo(Math.cos(a2) * 6.2, Math.sin(a2) * 6.2);
+    }
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  function drawWizard(p) {
+    var w = p.w, h = p.h;
+    var squash = p.onGround ? 1 + p.pop * 0.06 : 0.94;
+
+    ctx.save();
+    ctx.translate(p.x + w / 2, p.y + h);
+    ctx.scale(p.face, 1);
+
+    ctx.fillStyle = 'rgba(0,0,0,.35)';
+    ctx.beginPath();
+    ctx.ellipse(0, 2, w * 0.52, 5, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    var bg = ctx.createLinearGradient(0, -h, 0, 0);
+    bg.addColorStop(0, p.colors[0]);
+    bg.addColorStop(1, p.colors[1]);
+    ctx.fillStyle = bg;
+    ctx.beginPath();
+    ctx.moveTo(-w * 0.42, 0);
+    ctx.lineTo(-w * 0.30, -h * 0.55 * squash);
+    ctx.lineTo(w * 0.30, -h * 0.55 * squash);
+    ctx.lineTo(w * 0.42, 0);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#2b2b4a';
+    ctx.beginPath();
+    ctx.moveTo(-w * 0.52, -h * 0.52 * squash);
+    ctx.lineTo(w * 0.52, -h * 0.52 * squash);
+    ctx.lineTo(0, -h * 1.05 * squash);
+    ctx.closePath();
+    ctx.fill();
+
+    ctx.fillStyle = '#1b1b33';
+    ctx.beginPath();
+    ctx.ellipse(0, -h * 0.52 * squash, w * 0.56, h * 0.10, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = '#c9a227';
+    ctx.fillRect(-w * 0.30, -h * 0.63 * squash, w * 0.60, h * 0.07);
+
+    ctx.fillStyle = '#fff2c4';
+    ctx.beginPath();
+    ctx.arc(-6, -h * 0.40 * squash, 2.6, 0, Math.PI * 2);
+    ctx.arc(4, -h * 0.40 * squash, 2.6, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.restore();
+  }
+
+  function drawHud() {
+    ctx.textAlign = 'left';
+    ctx.font = 'bold 30px Georgia, serif';
+    ctx.fillStyle = '#ff9f8f';
+    ctx.fillText(String(p1.score), 26, 48);
+    ctx.font = '16px Georgia, serif';
+    ctx.fillStyle = 'rgba(244,233,200,.65)';
+    ctx.fillText('ты', 26, 70);
+
+    ctx.textAlign = 'right';
+    ctx.font = 'bold 30px Georgia, serif';
+    ctx.fillStyle = '#8ff0b5';
+    ctx.fillText(String(p2.score), W - 26, 48);
+    ctx.font = '16px Georgia, serif';
+    ctx.fillStyle = 'rgba(244,233,200,.65)';
+    ctx.fillText('телефон', W - 26, 70);
+
+    ctx.textAlign = 'center';
+    ctx.font = 'bold 26px Georgia, serif';
+    ctx.fillStyle = timeLeft <= 10 ? '#ff9a9a' : 'rgba(255,233,168,.9)';
+    ctx.fillText(String(timeLeft), W / 2, 48);
+    ctx.textAlign = 'left';
+  }
+
+  function drawOverlay() {
+    if (phase === 'countdown') {
+      ctx.fillStyle = 'rgba(8,6,20,.55)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = 'rgba(255,205,90,.8)';
+      ctx.shadowBlur = 26;
+      ctx.font = 'bold 110px Georgia, serif';
+      ctx.fillText(String(countdown > 0 ? countdown : 'Ход!'), W / 2, H / 2 + 30);
+      ctx.shadowBlur = 0;
+      ctx.textAlign = 'left';
+    }
+    if (phase === 'over') {
+      ctx.fillStyle = 'rgba(8,6,20,.78)';
+      ctx.fillRect(0, 0, W, H);
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#ffe9a8';
+      ctx.shadowColor = 'rgba(255,205,90,.8)';
+      ctx.shadowBlur = 24;
+      ctx.font = 'bold 44px Georgia, serif';
+      ctx.fillText(resultMsg, W / 2, H / 2 - 26);
+      ctx.shadowBlur = 0;
+      ctx.font = '30px Georgia, serif';
+      ctx.fillStyle = '#ff9f8f';
+      ctx.fillText(String(p1.score) + ' : ' + String(p2.score), W / 2, H / 2 + 26);
+      ctx.font = '19px Georgia, serif';
+      ctx.fillStyle = 'rgba(244,233,200,.8)';
+      ctx.fillText('Enter — сыграть ещё раз', W / 2, H / 2 + 72);
+      ctx.textAlign = 'left';
+    }
+  }
+
+  function render() {
+    drawBg();
+    drawPlats();
+    if (star && !star.got) drawStar(star);
+    if (p1) drawWizard(p1);
+    if (p2) drawWizard(p2);
+    if (p1) drawHud();
+    drawOverlay();
+  }
+
+  function loop() {
+    update();
+    render();
+    requestAnimationFrame(loop);
+  }
+
+  /* ---------- keyboard ---------- */
+  document.addEventListener('keydown', function (e) {
+    var k = e.code;
+    if (k === 'ArrowLeft' || k === 'KeyA') keys.l = 1;
+    if (k === 'ArrowRight' || k === 'KeyD') keys.r = 1;
+    if (k === 'Space' || k === 'ArrowUp' || k === 'KeyW') keys.j = 1;
+    if (k === 'Enter') {
+      if (phase === 'over' || phase === 'lobby') {
+        if (connected) startMatch();
+        else statusEl.textContent = 'Сначала подключи телефон!';
+      }
+    }
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].indexOf(k) >= 0) e.preventDefault();
+  });
+  document.addEventListener('keyup', function (e) {
+    var k = e.code;
+    if (k === 'ArrowLeft' || k === 'KeyA') keys.l = 0;
+    if (k === 'ArrowRight' || k === 'KeyD') keys.r = 0;
+    if (k === 'Space' || k === 'ArrowUp' || k === 'KeyW') keys.j = 0;
+  });
+
+  /* ---------- networking ---------- */
+  var roomCode = randomCode();
+  var peer = null;
+  var conn = null;
+  var connected = false;
+
+  function showRoom() {
+    codeEl.textContent = roomCode;
+    var base = location.href.split('#')[0];
+    var url = base + '#join=' + roomCode;
+    qrEl.src = 'https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=0&data=' + encodeURIComponent(url);
+  }
+
+  function setStatus(txt, isErr) {
+    statusEl.textContent = txt;
+    statusEl.className = isErr ? 'err' : '';
+  }
+
+  function openPeer() {
+    showRoom();
+    setStatus('Готовлю арену…');
+    peer = new Peer('hatduel-' + roomCode, { debug: 0 });
+
+    peer.on('open', function () {
+      setStatus('Сканируй QR телефоном — и в бой!');
+    });
+
+    peer.on('connection', function (c) {
+      if (conn && conn.open) { try { c.close(); } catch (e) {} return; }
+      conn = c;
+      c.on('open', function () {
+        connected = true;
+        setStatus('Телефон подключён! Enter — начать дуэль');
+        blip(700, 0.14, 'sine', 0.06);
+        sendState();
+      });
+      c.on('data', function (d) {
+        if (!d || d.t !== 'in') return;
+        padInput.l = d.l ? 1 : 0;
+        padInput.r = d.r ? 1 : 0;
+        padInput.j = d.j ? 1 : 0;
+      });
+      c.on('close', function () {
+        connected = false;
+        conn = null;
+        padInput = { l: 0, r: 0, j: 0 };
+        if (phase === 'play' || phase === 'countdown') {
+          phase = 'lobby';
+          lobby.classList.remove('hide');
+        }
+        setStatus('Телефон отключился. Подключись снова.', true);
+      });
+      c.on('error', function () {
+        setStatus('Сбой связи с телефоном.', true);
+      });
+    });
+
+    peer.on('error', function (e) {
+      var m = (e && e.type) || '';
+      if (m === 'unavailable-id') {
+        roomCode = randomCode();
+        try { peer.destroy(); } catch (er) {}
+        setTimeout(openPeer, 400);
+      } else if (m === 'network' || m === 'server-error' || m === 'socket-error') {
+        setStatus('Нет связи с сервером комнат. Проверь интернет.', true);
+      } else if (m === 'browser-incompatible') {
+        setStatus('Браузер не поддерживает соединение. Попробуй Chrome или Firefox.', true);
+      } else {
+        setStatus('Ошибка соединения: ' + m, true);
+      }
+    });
+
+    peer.on('disconnected', function () {
+      setStatus('Связь с сервером потеряна…', true);
+      try { peer.reconnect(); } catch (e) {}
+    });
+  }
+
+  var lastSend = 0;
+  function sendState() {
+    if (!conn || !conn.open) return;
+    var now = Date.now();
+    if (now - lastSend < 100) return;
+    lastSend = now;
+    try {
+      conn.send({
+        t: 'state',
+        a: p1 ? p1.score : 0,
+        b: p2 ? p2.score : 0,
+        sec: timeLeft,
+        phase: phase,
+        cd: countdown,
+        msg: resultMsg
+      });
+    } catch (e) {}
+  }
+
+  // push state to the phone a few times a second
+  setInterval(sendState, 120);
+
+  resetMatch();
+  openPeer();
+  loop();
+
+  window.__duel = {
+    get phase() { return phase; },
+    get p1() { return p1; },
+    get p2() { return p2; },
+    get connected() { return connected; },
+    get code() { return roomCode; },
+    start: startMatch,
+    reset: resetMatch,
+    padInput: function () { return padInput; }
+  };
+})();
+</script>
+</body>
+</html>
